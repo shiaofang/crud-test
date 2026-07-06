@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
-import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from "element-plus";
+import type { FormInstance, FormRules } from "element-plus";
+import { Plus, Search } from "@element-plus/icons-vue";
 import { productApi } from "./api";
 import type { Product, ProductPayload } from "./types";
 
@@ -152,8 +153,8 @@ onMounted(fetchData);
         </el-table-column>
         <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" @click="openEdit(row)">编辑</el-button>
-            <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
+            <el-button size="small" @click="openEdit(row as Product)">编辑</el-button>
+            <el-button size="small" type="danger" @click="handleDelete(row as Product)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
