@@ -1,3 +1,5 @@
+"""ORM 数据模型：与数据库表结构一一对应。"""
+
 from datetime import datetime
 
 from sqlalchemy import DateTime, Integer, Numeric, String, func
@@ -7,6 +9,8 @@ from .database import Base
 
 
 class Product(Base):
+    """商品表。"""
+
     __tablename__ = "products"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

@@ -1,3 +1,5 @@
+"""数据访问层：封装对 Product 表的增删改查，路由层只与本模块交互。"""
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -5,12 +7,14 @@ from . import models, schemas
 
 
 def get_product(db: Session, product_id: int) -> models.Product | None:
+    """按主键查询单个商品，不存在时返回 None。"""
     return db.get(models.Product, product_id)
 
 
 def get_products(
     db: Session, skip: int = 0, limit: int = 20, keyword: str | None = None
 ) -> tuple[int, list[models.Product]]:
+    """分页查询商品，返回 (总数, 当前页列表)；keyword 存在时按名称模糊匹配。"""
     stmt = select(models.Product)
     count_stmt = select(func.count()).select_from(models.Product)
 
@@ -31,6 +35,7 @@ def get_products(
 
 
 def create_product(db: Session, product: schemas.ProductCreate) -> models.Product:
+    """创建并持久化商品，返回落库后的实例。"""
     db_product = models.Product(**product.model_dump())
     db.add(db_product)
     db.commit()
@@ -41,6 +46,7 @@ def create_product(db: Session, product: schemas.ProductCreate) -> models.Produc
 def update_product(
     db: Session, db_product: models.Product, product: schemas.ProductUpdate
 ) -> models.Product:
+    """按传入字段增量更新商品（未显式传入的字段保持不变）。"""
     for field, value in product.model_dump(exclude_unset=True).items():
         setattr(db_product, field, value)
     db.commit()
@@ -49,5 +55,6 @@ def update_product(
 
 
 def delete_product(db: Session, db_product: models.Product) -> None:
+    """删除指定商品。"""
     db.delete(db_product)
     db.commit()

@@ -23,9 +23,6 @@ test/
 │       ├── App.vue     # 主界面（表格 + 弹窗表单）
 │       ├── api.ts      # axios 封装
 │       └── types.ts
-├── deploy/             # 部署配置模板
-│   ├── crud-backend.service
-│   └── nginx.conf
 └── DEPLOY.md           # Ubuntu 22.04 部署指南
 ```
 
