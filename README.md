@@ -7,23 +7,21 @@
 - **数据库**：MySQL
 
 ```
-test/
-├── backend/            # FastAPI 后端
+crud-app/
+├── backend/                # FastAPI 后端
 │   ├── app/
-│   │   ├── main.py     # 路由入口
-│   │   ├── config.py   # 读取 .env 配置
-│   │   ├── database.py # 数据库连接
-│   │   ├── models.py   # ORM 模型
-│   │   ├── schemas.py  # Pydantic 校验模型
-│   │   └── crud.py     # 增删改查逻辑
-│   ├── requirements.txt
-│   └── .env.example
-├── frontend/           # Vue3 前端
+│   ├── Dockerfile
+│   └── requirements.txt
+├── frontend/               # Vue3 前端
+│   ├── Dockerfile          # 多阶段构建：npm build + nginx
 │   └── src/
-│       ├── App.vue     # 主界面（表格 + 弹窗表单）
-│       ├── api.ts      # axios 封装
-│       └── types.ts
-└── DEPLOY.md           # Ubuntu 22.04 部署指南
+├── docker/
+│   └── nginx.conf          # Nginx 反向代理配置
+├── .github/workflows/
+│   └── ci-cd.yml           # push main 自动构建 & 部署
+├── docker-compose.yml      # 本地 Docker 开发
+├── docker-compose.prod.yml # 生产环境（使用 GHCR 镜像）
+└── DEPLOY.md               # Ubuntu 裸机部署指南
 ```
 
 ## 本地开发
@@ -78,6 +76,58 @@ npm run dev
 | PUT | `/api/products/{id}` | 更新 |
 | DELETE | `/api/products/{id}` | 删除 |
 
-## 部署
+## Docker 本地运行
+
+在项目根目录复制环境变量并启动全部服务（MySQL + 后端 + Nginx）：
+
+```bash
+cp .env.example .env
+# 编辑 .env，至少修改 DB_PASSWORD
+
+docker compose up -d --build
+```
+
+浏览器访问 http://localhost 。前端在镜像构建阶段完成打包，无需手动 `npm run build` 或 scp `dist/`。
+
+## CI/CD 自动部署
+
+push 到 `main` 分支时，GitHub Actions 会：
+
+1. 构建并校验前端
+2. 构建 backend / nginx 镜像并推送到 GHCR
+3. SSH 到服务器执行 `docker compose pull && up -d`
+
+### 服务器一次性准备
+
+```bash
+# 安装 Docker 与 Compose 插件
+curl -fsSL https://get.docker.com | sh
+
+mkdir -p /opt/crud-app
+```
+
+安全组放行 **80** 端口。
+
+### GitHub Secrets 配置
+
+在仓库 **Settings → Secrets and variables → Actions** 中添加：
+
+| Secret | 说明 |
+| --- | --- |
+| `SERVER_HOST` | 服务器公网 IP |
+| `SERVER_USER` | SSH 用户名，如 `root` |
+| `SSH_PRIVATE_KEY` | SSH 私钥全文 |
+| `DB_PASSWORD` | MySQL root 密码 |
+| `CORS_ORIGINS` | 前端访问地址，如 `http://8.136.47.107` |
+| `GHCR_PULL_TOKEN` | GitHub PAT，`read:packages` 权限，用于服务器拉私有镜像 |
+
+首次 push 到 main 后，Actions 会自动完成构建与发布。
+
+### 镜像命名
+
+- `ghcr.io/<owner>/<repo>-backend:<sha>`
+- `ghcr.io/<owner>/<repo>-nginx:<sha>`
+
+## 裸机部署（传统方式）
 
 见 [DEPLOY.md](./DEPLOY.md)。
