@@ -81,20 +81,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup SSH agent
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-
-      - name: Add server to known hosts
-        run: ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
-
-      - name: Verify deploy key
+      - name: Prepare deploy target
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
         run: |
-          echo "Loaded key fingerprint:"
-          ssh-add -l
-          echo "Public key (compare with server authorized_keys):"
-          ssh-add -L
+          echo "DEPLOY_HOST=$(echo -n "$SERVER_HOST" | tr -d '[:space:]')" >> "$GITHUB_ENV"
+          echo "DEPLOY_USER=$(echo -n "$SERVER_USER" | tr -d '[:space:]')" >> "$GITHUB_ENV"
+          echo "Deploy target: $(echo -n "$SERVER_USER" | tr -d '[:space:]')@$(echo -n "$SERVER_HOST" | tr -d '[:space:]')"
+
+      - name: Setup SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          if echo "$SSH_PRIVATE_KEY" | grep -q 'BEGIN OPENSSH PRIVATE KEY'; then
+            printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          else
+            echo "$SSH_PRIVATE_KEY" | base64 -d > ~/.ssh/deploy_key
+          fi
+          chmod 600 ~/.ssh/deploy_key
+          echo "Public key loaded from secret (must match server authorized_keys):"
+          ssh-keygen -y -f ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ env.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Extract image metadata
         id: meta
@@ -106,16 +115,18 @@ jobs:
 
       - name: Copy compose file to server
         run: |
-          ssh -o BatchMode=yes "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" "mkdir -p /opt/crud-app"
-          scp -o BatchMode=yes docker-compose.prod.yml \
-            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/crud-app/"
+          SSH_OPTS="-o BatchMode=yes -o IdentitiesOnly=yes -i ~/.ssh/deploy_key"
+          ssh $SSH_OPTS "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" "mkdir -p /opt/crud-app"
+          scp $SSH_OPTS docker-compose.prod.yml \
+            "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}:/opt/crud-app/"
 
       - name: Deploy on server
         env:
           BACKEND_IMAGE: ${{ steps.meta.outputs.backend_image }}:${{ github.sha }}
           NGINX_IMAGE: ${{ steps.meta.outputs.nginx_image }}:${{ github.sha }}
         run: |
-          ssh -o BatchMode=yes "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" << EOF
+          ssh -o BatchMode=yes -o IdentitiesOnly=yes -i ~/.ssh/deploy_key \
+            "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" << EOF
           set -euo pipefail
           mkdir -p /opt/crud-app
           cd /opt/crud-app
