@@ -81,13 +81,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup SSH key
+      - name: Setup SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Verify deploy key
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null
-          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+          echo "Loaded key fingerprint:"
+          ssh-add -l
+          echo "Public key (compare with server authorized_keys):"
+          ssh-add -L
 
       - name: Extract image metadata
         id: meta
@@ -99,8 +106,8 @@ jobs:
 
       - name: Copy compose file to server
         run: |
-          ssh -i ~/.ssh/deploy_key "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" "mkdir -p /opt/crud-app"
-          scp -i ~/.ssh/deploy_key docker-compose.prod.yml \
+          ssh -o BatchMode=yes "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" "mkdir -p /opt/crud-app"
+          scp -o BatchMode=yes docker-compose.prod.yml \
             "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/crud-app/"
 
       - name: Deploy on server
@@ -108,7 +115,7 @@ jobs:
           BACKEND_IMAGE: ${{ steps.meta.outputs.backend_image }}:${{ github.sha }}
           NGINX_IMAGE: ${{ steps.meta.outputs.nginx_image }}:${{ github.sha }}
         run: |
-          ssh -i ~/.ssh/deploy_key "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" << EOF
+          ssh -o BatchMode=yes "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" << EOF
           set -euo pipefail
           mkdir -p /opt/crud-app
           cd /opt/crud-app
