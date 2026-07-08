@@ -83,9 +83,11 @@ jobs:
 
       - name: Setup SSH key
         run: |
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > deploy_key
-          chmod 600 deploy_key
-          ssh-keygen -y -f deploy_key > /dev/null
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Extract image metadata
         id: meta
@@ -96,35 +98,28 @@ jobs:
           echo "nginx_image=${{ env.REGISTRY }}/${OWNER}/${REPO}-nginx" >> "$GITHUB_OUTPUT"
 
       - name: Copy compose file to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key_path: deploy_key
-          source: docker-compose.prod.yml
-          target: /opt/crud-app/
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" "mkdir -p /opt/crud-app"
+          scp -i ~/.ssh/deploy_key docker-compose.prod.yml \
+            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/crud-app/"
 
       - name: Deploy on server
-        uses: appleboy/ssh-action@v1.2.0
         env:
           BACKEND_IMAGE: ${{ steps.meta.outputs.backend_image }}:${{ github.sha }}
           NGINX_IMAGE: ${{ steps.meta.outputs.nginx_image }}:${{ github.sha }}
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key_path: deploy_key
-          envs: BACKEND_IMAGE,NGINX_IMAGE
-          script: |
-            set -euo pipefail
-            mkdir -p /opt/crud-app
-            cd /opt/crud-app
-            echo "${{ secrets.GHCR_PULL_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            cat > .env.deploy <<EOF
-            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-            CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}
-            BACKEND_IMAGE=${BACKEND_IMAGE}
-            NGINX_IMAGE=${NGINX_IMAGE}
-            EOF
-            docker compose --env-file .env.deploy -f docker-compose.prod.yml pull
-            docker compose --env-file .env.deploy -f docker-compose.prod.yml up -d
-            docker image prune -f
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" << EOF
+          set -euo pipefail
+          mkdir -p /opt/crud-app
+          cd /opt/crud-app
+          echo "${{ secrets.GHCR_PULL_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          cat > .env.deploy << INNEREOF
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}
+          BACKEND_IMAGE=${BACKEND_IMAGE}
+          NGINX_IMAGE=${NGINX_IMAGE}
+          INNEREOF
+          docker compose --env-file .env.deploy -f docker-compose.prod.yml pull
+          docker compose --env-file .env.deploy -f docker-compose.prod.yml up -d
+          docker image prune -f
+          EOF
