@@ -6,4 +6,4 @@
 **/dist
 **/.env
 **/*.md
-DEPLOY.md
+HANDLE_DEPLOY.md
