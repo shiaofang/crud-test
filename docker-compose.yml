@@ -26,6 +26,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: crud_demo
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
 
   nginx:
     build:

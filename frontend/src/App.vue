@@ -1,229 +1,146 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
-import type { FormInstance, FormRules } from "element-plus";
-import { Plus, Search } from "@element-plus/icons-vue";
-import { productApi } from "./api";
-import type { Product, ProductPayload } from "./types";
+import { computed } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { useAuth } from "./composables/useAuth";
 
-const loading = ref(false);
-const products = ref<Product[]>([]);
-const total = ref(0);
-const page = ref(1);
-const pageSize = ref(10);
-const keyword = ref("");
+const route = useRoute();
+const router = useRouter();
+const auth = useAuth();
 
-const dialogVisible = ref(false);
-const dialogTitle = ref("");
-const editingId = ref<number | null>(null);
-const formRef = ref<FormInstance>();
-const submitting = ref(false);
-
-const form = reactive<ProductPayload>({
-  name: "",
-  description: "",
-  price: 0,
-  stock: 0,
+const activeMenu = computed(() => {
+  if (route.path.startsWith("/admin/hot-products")) return "/admin/hot-products";
+  if (route.path.startsWith("/admin/products")) return "/admin/products";
+  return route.path;
 });
 
-const rules: FormRules = {
-  name: [{ required: true, message: "请输入商品名称", trigger: "blur" }],
-  price: [{ required: true, message: "请输入价格", trigger: "blur" }],
-  stock: [{ required: true, message: "请输入库存", trigger: "blur" }],
-};
-
-async function fetchData() {
-  loading.value = true;
-  try {
-    const res = await productApi.list({
-      page: page.value,
-      page_size: pageSize.value,
-      keyword: keyword.value || undefined,
-    });
-    products.value = res.items;
-    total.value = res.total;
-  } catch (e) {
-    ElMessage.error("加载数据失败，请检查后端服务");
-  } finally {
-    loading.value = false;
-  }
+function handleLogout() {
+  auth.logout();
+  router.push({ name: "home" });
 }
-
-function handleSearch() {
-  page.value = 1;
-  fetchData();
-}
-
-function openCreate() {
-  dialogTitle.value = "新增商品";
-  editingId.value = null;
-  Object.assign(form, { name: "", description: "", price: 0, stock: 0 });
-  dialogVisible.value = true;
-}
-
-function openEdit(row: Product) {
-  dialogTitle.value = "编辑商品";
-  editingId.value = row.id;
-  Object.assign(form, {
-    name: row.name,
-    description: row.description ?? "",
-    price: Number(row.price),
-    stock: row.stock,
-  });
-  dialogVisible.value = true;
-}
-
-async function submitForm() {
-  if (!formRef.value) return;
-  await formRef.value.validate(async (valid) => {
-    if (!valid) return;
-    submitting.value = true;
-    try {
-      const payload: ProductPayload = { ...form };
-      if (editingId.value === null) {
-        await productApi.create(payload);
-        ElMessage.success("新增成功");
-      } else {
-        await productApi.update(editingId.value, payload);
-        ElMessage.success("更新成功");
-      }
-      dialogVisible.value = false;
-      fetchData();
-    } catch (e) {
-      ElMessage.error("保存失败");
-    } finally {
-      submitting.value = false;
-    }
-  });
-}
-
-async function handleDelete(row: Product) {
-  try {
-    await ElMessageBox.confirm(`确定删除商品「${row.name}」吗？`, "提示", {
-      type: "warning",
-      confirmButtonText: "删除",
-      cancelButtonText: "取消",
-    });
-    await productApi.remove(row.id);
-    ElMessage.success("删除成功");
-    if (products.value.length === 1 && page.value > 1) page.value -= 1;
-    fetchData();
-  } catch (e) {
-    if (e !== "cancel") ElMessage.error("删除失败");
-  }
-}
-
-onMounted(fetchData);
 </script>
 
 <template>
-  <div class="page">
-    <el-card shadow="never">
-      <template #header>
-        <div class="header">
-          <span class="title">商品管理系统</span>
-          <div class="actions">
-            <el-input
-              v-model="keyword"
-              placeholder="按名称搜索"
-              clearable
-              style="width: 220px"
-              @keyup.enter="handleSearch"
-              @clear="handleSearch"
-            >
-              <template #prefix><el-icon><Search /></el-icon></template>
-            </el-input>
-            <el-button type="primary" @click="handleSearch">搜索</el-button>
-            <el-button type="success" @click="openCreate">
-              <el-icon><Plus /></el-icon>新增
-            </el-button>
-          </div>
-        </div>
-      </template>
+  <div class="layout">
+    <header class="navbar">
+      <div class="navbar-inner">
+        <router-link to="/" class="brand">
+          <span class="brand-icon">🛒</span>
+          <span class="brand-text">悦购商城</span>
+        </router-link>
 
-      <el-table :data="products" v-loading="loading" border stripe>
-        <el-table-column prop="id" label="ID" width="70" />
-        <el-table-column prop="name" label="商品名称" min-width="140" />
-        <el-table-column prop="description" label="描述" min-width="180" show-overflow-tooltip />
-        <el-table-column prop="price" label="价格" width="110">
-          <template #default="{ row }">￥{{ Number(row.price).toFixed(2) }}</template>
-        </el-table-column>
-        <el-table-column prop="stock" label="库存" width="90" />
-        <el-table-column prop="created_at" label="创建时间" width="180">
-          <template #default="{ row }">{{ row.created_at?.replace("T", " ").slice(0, 19) }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
-          <template #default="{ row }">
-            <el-button size="small" @click="openEdit(row as Product)">编辑</el-button>
-            <el-button size="small" type="danger" @click="handleDelete(row as Product)">删除</el-button>
+        <el-menu
+          mode="horizontal"
+          :default-active="activeMenu"
+          :ellipsis="false"
+          router
+          class="nav-menu"
+        >
+          <el-menu-item index="/">首页</el-menu-item>
+          <el-menu-item v-if="auth.isLoggedIn.value" index="/admin/hot-products">热门商品管理</el-menu-item>
+          <el-menu-item v-if="auth.isLoggedIn.value" index="/admin/products">商品管理</el-menu-item>
+        </el-menu>
+
+        <div class="nav-actions">
+          <template v-if="auth.isLoggedIn.value">
+            <span class="username">你好，{{ auth.user.value?.username }}</span>
+            <el-button type="danger" plain size="small" @click="handleLogout">退出</el-button>
           </template>
-        </el-table-column>
-      </el-table>
-
-      <div class="pagination">
-        <el-pagination
-          background
-          layout="total, sizes, prev, pager, next"
-          :total="total"
-          :current-page="page"
-          :page-size="pageSize"
-          :page-sizes="[10, 20, 50]"
-          @current-change="(p: number) => { page = p; fetchData(); }"
-          @size-change="(s: number) => { pageSize = s; page = 1; fetchData(); }"
-        />
+          <template v-else>
+            <el-button type="primary" plain size="small" @click="router.push('/login')">登录</el-button>
+            <el-button type="primary" size="small" @click="router.push('/register')">注册</el-button>
+          </template>
+        </div>
       </div>
-    </el-card>
+    </header>
 
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="480px">
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="80px">
-        <el-form-item label="名称" prop="name">
-          <el-input v-model="form.name" placeholder="请输入商品名称" />
-        </el-form-item>
-        <el-form-item label="描述">
-          <el-input v-model="form.description" type="textarea" :rows="3" placeholder="请输入描述" />
-        </el-form-item>
-        <el-form-item label="价格" prop="price">
-          <el-input-number v-model="form.price" :min="0" :precision="2" :step="1" />
-        </el-form-item>
-        <el-form-item label="库存" prop="stock">
-          <el-input-number v-model="form.stock" :min="0" :step="1" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="submitForm">确定</el-button>
-      </template>
-    </el-dialog>
+    <main class="main">
+      <router-view />
+    </main>
+
+    <footer class="footer">
+      <span>© 2026 悦购商城 · 品质生活，从这里开始</span>
+    </footer>
   </div>
 </template>
 
 <style>
 body {
   margin: 0;
-  background: #f0f2f5;
+  background: #f5f7fa;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
     "PingFang SC", "Microsoft YaHei", sans-serif;
 }
-.page {
-  max-width: 1100px;
-  margin: 24px auto;
-  padding: 0 16px;
+
+.layout {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
-.header {
+
+.navbar {
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.navbar-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 20px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 24px;
+  height: 60px;
 }
-.title {
-  font-size: 18px;
-  font-weight: 600;
-}
-.actions {
+
+.brand {
   display: flex;
+  align-items: center;
   gap: 8px;
+  text-decoration: none;
+  color: #303133;
+  flex-shrink: 0;
 }
-.pagination {
+
+.brand-icon {
+  font-size: 24px;
+}
+
+.brand-text {
+  font-size: 20px;
+  font-weight: 700;
+  color: #409eff;
+}
+
+.nav-menu {
+  flex: 1;
+  border-bottom: none !important;
+}
+
+.nav-actions {
   display: flex;
-  justify-content: flex-end;
-  margin-top: 16px;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.username {
+  font-size: 14px;
+  color: #606266;
+}
+
+.main {
+  flex: 1;
+}
+
+.footer {
+  text-align: center;
+  padding: 20px;
+  color: #909399;
+  font-size: 13px;
+  background: #fff;
+  border-top: 1px solid #ebeef5;
 }
 </style>

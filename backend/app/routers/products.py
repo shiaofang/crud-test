@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
 from ..database import get_db
-from ..dependencies import get_product_or_404
+from ..dependencies import get_current_user, get_product_or_404
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -37,6 +37,7 @@ def get_product(product: models.Product = Depends(get_product_or_404)) -> models
 def create_product(
     payload: schemas.ProductCreate,
     db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
 ) -> models.Product:
     """创建商品。"""
     return crud.create_product(db, payload)
@@ -47,6 +48,7 @@ def update_product(
     payload: schemas.ProductUpdate,
     product: models.Product = Depends(get_product_or_404),
     db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
 ) -> models.Product:
     """更新商品，仅覆盖请求中显式传入的字段。"""
     return crud.update_product(db, product, payload)
@@ -56,6 +58,7 @@ def update_product(
 def delete_product(
     product: models.Product = Depends(get_product_or_404),
     db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
 ) -> None:
     """删除商品。"""
     crud.delete_product(db, product)

@@ -1,10 +1,46 @@
 import axios from "axios";
-import type { Product, ProductList, ProductPayload } from "./types";
+import type {
+  HotProduct,
+  HotProductList,
+  HotProductPayload,
+  LoginPayload,
+  Product,
+  ProductList,
+  ProductPayload,
+  RegisterPayload,
+  Token,
+  User,
+} from "./types";
 
 const http = axios.create({
   baseURL: "/api",
   timeout: 10000,
 });
+
+export function setAuthToken(token: string | null) {
+  if (token) {
+    http.defaults.headers.common.Authorization = `Bearer ${token}`;
+  } else {
+    delete http.defaults.headers.common.Authorization;
+  }
+}
+
+const savedToken = localStorage.getItem("access_token");
+if (savedToken) {
+  setAuthToken(savedToken);
+}
+
+export const authApi = {
+  register(data: RegisterPayload) {
+    return http.post<User>("/auth/register", data).then((r) => r.data);
+  },
+  login(data: LoginPayload) {
+    return http.post<Token>("/auth/login", data).then((r) => r.data);
+  },
+  me() {
+    return http.get<User>("/auth/me").then((r) => r.data);
+  },
+};
 
 export const productApi = {
   list(params: { page: number; page_size: number; keyword?: string }) {
@@ -18,5 +54,20 @@ export const productApi = {
   },
   remove(id: number) {
     return http.delete(`/products/${id}`).then((r) => r.data);
+  },
+};
+
+export const hotProductApi = {
+  list(params: { page: number; page_size: number; keyword?: string }) {
+    return http.get<HotProductList>("/hot-products", { params }).then((r) => r.data);
+  },
+  create(data: HotProductPayload) {
+    return http.post<HotProduct>("/hot-products", data).then((r) => r.data);
+  },
+  update(id: number, data: HotProductPayload) {
+    return http.put<HotProduct>(`/hot-products/${id}`, data).then((r) => r.data);
+  },
+  remove(id: number) {
+    return http.delete(`/hot-products/${id}`).then((r) => r.data);
   },
 };

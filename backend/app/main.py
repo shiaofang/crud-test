@@ -13,12 +13,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .database import Base, engine
-from .routers import health, products
+from .database import Base, SessionLocal, engine
+from .routers import auth, health, hot_products, products
+from .seed import seed_hot_products
 
 API_PREFIX = "/api"
 
 Base.metadata.create_all(bind=engine)
+
+with SessionLocal() as db:
+    seed_hot_products(db)
 
 app = FastAPI(title="商品管理 CRUD API", version="1.0.0")
 
@@ -31,4 +35,6 @@ app.add_middleware(
 )
 
 app.include_router(health.router, prefix=API_PREFIX)
+app.include_router(auth.router, prefix=API_PREFIX)
+app.include_router(hot_products.router, prefix=API_PREFIX)
 app.include_router(products.router, prefix=API_PREFIX)

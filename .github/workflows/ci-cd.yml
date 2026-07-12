@@ -120,6 +120,7 @@ jobs:
           cat > .env.deploy << INNEREOF
           DB_PASSWORD=${{ secrets.DB_PASSWORD }}
           CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
           BACKEND_IMAGE=${BACKEND_IMAGE}
           NGINX_IMAGE=${NGINX_IMAGE}
           INNEREOF
