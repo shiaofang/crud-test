@@ -36,7 +36,7 @@
 ```
 /var/www/crud-app/
 ├── backend/
-│   ├── app/
+│   ├── app/                # Python 包（含 __init__.py）
 │   ├── .env
 │   ├── .venv/
 │   └── requirements.txt
@@ -169,7 +169,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 # 前台启动 FastAPI
-# app.main:app → app 是包目录，main 是 main.py，:app 是 FastAPI 实例
+# app.main:app → app 是 Python 包（含 __init__.py），main 是 main.py，:app 是 FastAPI 实例
 # --host 127.0.0.1：只监听本机，外网经 Nginx 反代访问
 # --port 8000：后端端口
 uvicorn app.main:app --host 127.0.0.1 --port 8000

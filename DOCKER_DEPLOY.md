@@ -104,7 +104,7 @@
 crud-app/
 ├── backend/
 │   ├── Dockerfile              # 后端镜像：Python + uvicorn
-│   └── app/                    # FastAPI 业务代码
+│   └── app/                    # FastAPI 业务代码（Python 包，含 __init__.py）
 ├── frontend/
 │   └── Dockerfile              # 前端镜像：多阶段 node build + nginx
 ├── docker/

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, EmailStr
 
 
 class ProductBase(BaseModel):
@@ -49,7 +49,7 @@ class UserRegister(BaseModel):
 
     username: str = Field(..., min_length=3, max_length=50, description="用户名")
     password: str = Field(..., min_length=6, max_length=128, description="密码")
-    email: str | None = Field(None, max_length=100, description="邮箱")
+    email: EmailStr | None = Field(None, description="邮箱")
 
 
 class UserLogin(BaseModel):
