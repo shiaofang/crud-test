@@ -4,6 +4,20 @@
 
 不只调用 Chat API，而是把鉴权、工具循环、流式输出、写库后前端刷新、容器化发布串成可运行闭环。应用内更完整的讲解见前端路由 **`/about`（项目介绍）**。
 
+## 界面预览
+
+### 首页热门商品
+
+按点击量展示 Top 3，支持关键字搜索；右下角为 AI 助手入口。
+
+![首页热门商品](docs/screenshots/home.png)
+
+### 商品管理
+
+登录后分页 CRUD：搜索、新增、编辑、删除。
+
+![商品管理](docs/screenshots/products.png)
+
 ## 技术栈
 
 | 层 | 技术 |
@@ -26,6 +40,32 @@
 | 部署 | 本地 Compose 一键起；push `main` 自动构建镜像并部署到服务器 |
 
 **设计取舍：** 用户管理无独立后台页，由助手工具完成；当前无 RBAC（登录用户权限相同）；`clickCount` 字段已落地，自动累加可后续扩展。
+
+## AI 助手演示
+
+助手以自然语言操作商品/用户，UI 展示「思考过程」（工具调用、校验失败自纠、模型异常重试），写库成功后前端列表自动刷新。
+
+### 查询与参数自纠
+
+用户问「单价 100 元以上的商品」→ 调用 `查询商品列表`；`page_size` 超限报错后自动缩小参数重试，再汇总回复。
+
+![AI 查询与参数自纠](docs/screenshots/thinking1.png)
+
+### 创建与更新商品
+
+自然语言新增商品，再按要求扩写描述；助手依次调用查询 / 创建 / 更新工具，管理页同步刷新。
+
+![AI 创建与更新商品](docs/screenshots/thinking2.png)
+
+### 批量改价（多轮工具循环）
+
+「把 100 元以上商品改成 100 元以下随机价」→ 多轮 `更新商品`；遇模型中断会自动续跑，并做收尾核对。
+
+![AI 批量改价过程](docs/screenshots/thinking3.png)
+
+完成后给出变更清单与结论：
+
+![AI 批量改价结果](docs/screenshots/thinking4.png)
 
 ## 架构
 
@@ -68,6 +108,7 @@ crud-app/
 │       ├── composables/      # useAuth、useDataRefresh
 │       ├── api.ts            # Axios + SSE chat
 │       └── router/
+├── docs/screenshots/         # README 界面与 AI 助手截图
 ├── docker/nginx.conf         # 静态资源 + /api 反代（SSE 关闭缓冲）
 ├── .github/workflows/ci-cd.yml
 ├── docker-compose.yml

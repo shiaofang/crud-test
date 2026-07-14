@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from langchain_core.tools import BaseTool, StructuredTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from . import crud, models, schemas, security
@@ -147,17 +147,43 @@ def _list_hot_products(keyword: str | None = None, limit: int = 3) -> str:
 
 class ListProductsArgs(BaseModel):
     page: int = Field(1, ge=1, description="页码，从 1 开始")
-    page_size: int = Field(10, ge=1, le=50, description="每页数量")
+    page_size: int = Field(
+        50, ge=1, description="每页数量，最大 100；超出将自动截断为 100"
+    )
     keyword: str | None = Field(None, description="按商品名称模糊搜索")
 
+    @field_validator("page_size", mode="before")
+    @classmethod
+    def _clamp_page_size(cls, value: Any) -> int:
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            return 50
+        return max(1, min(n, 100))
 
-def _list_products(page: int = 1, page_size: int = 10, keyword: str | None = None) -> str:
+
+def _list_products(page: int = 1, page_size: int = 50, keyword: str | None = None) -> str:
     if isinstance(_require_login(), str):
         return LOGIN_REQUIRED_MSG
     db = _require_db()
+    page_size = max(1, min(int(page_size or 50), 100))
     skip = (page - 1) * page_size
     total, items = crud.get_products(db, skip=skip, limit=page_size, keyword=keyword)
-    return _json({"total": total, "items": [_product_dict(p) for p in items]})
+    # 给模型精简字段，降低多轮上下文体积
+    return _json(
+        {
+            "total": total,
+            "items": [
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "price": float(p.price),
+                    "stock": p.stock,
+                }
+                for p in items
+            ],
+        }
+    )
 
 
 class GetProductArgs(BaseModel):
@@ -175,10 +201,12 @@ def _get_product(product_id: int) -> str:
 
 
 class CreateProductArgs(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100, description="商品名称")
-    description: str | None = Field(None, max_length=500, description="描述")
-    price: float = Field(0, ge=0, description="价格")
-    stock: int = Field(0, ge=0, description="库存")
+    name: str = Field(..., min_length=1, max_length=100, description="商品名称（必填）")
+    description: str | None = Field(
+        None, max_length=500, description="描述；用户未提供时可自行填写合理内容"
+    )
+    price: float = Field(0, ge=0, description="价格；用户未提供时可自行填写合理正数")
+    stock: int = Field(0, ge=0, description="库存；用户未提供时可自行填写合理非负整数")
 
 
 def _create_product(
@@ -269,17 +297,36 @@ def _delete_product(product_id: int) -> str:
 
 class ListUsersArgs(BaseModel):
     page: int = Field(1, ge=1, description="页码，从 1 开始")
-    page_size: int = Field(10, ge=1, le=50, description="每页数量")
+    page_size: int = Field(
+        50, ge=1, description="每页数量，最大 100；超出将自动截断为 100"
+    )
     keyword: str | None = Field(None, description="按用户名模糊搜索")
 
+    @field_validator("page_size", mode="before")
+    @classmethod
+    def _clamp_page_size(cls, value: Any) -> int:
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            return 50
+        return max(1, min(n, 100))
 
-def _list_users(page: int = 1, page_size: int = 10, keyword: str | None = None) -> str:
+
+def _list_users(page: int = 1, page_size: int = 50, keyword: str | None = None) -> str:
     if isinstance(_require_login(), str):
         return LOGIN_REQUIRED_MSG
     db = _require_db()
+    page_size = max(1, min(int(page_size or 50), 100))
     skip = (page - 1) * page_size
     total, items = crud.list_users(db, skip=skip, limit=page_size, keyword=keyword)
-    return _json({"total": total, "items": [_user_dict(u) for u in items]})
+    return _json(
+        {
+            "total": total,
+            "items": [
+                {"id": u.id, "username": u.username, "email": u.email} for u in items
+            ],
+        }
+    )
 
 
 class GetUserArgs(BaseModel):
@@ -397,13 +444,19 @@ def build_tools() -> list[BaseTool]:
         StructuredTool.from_function(
             func=_create_product,
             name="create_product",
-            description="创建新商品（名称、描述、价格、库存）。商品名称不可与已有商品重复。",
+            description=(
+                "创建新商品。名称必填；描述、价格、库存可选，缺省时可传合理示例值。"
+                "商品名称不可与已有商品重复。"
+            ),
             args_schema=CreateProductArgs,
         ),
         StructuredTool.from_function(
             func=_update_product,
             name="update_product",
-            description="按 ID 更新商品字段（仅传需要修改的字段，不要传 null）。",
+            description=(
+                "按 ID 更新单个商品字段（仅传需要修改的字段，不要传 null）。"
+                "一次要改多个商品时，请在同一轮并行多次调用本工具。"
+            ),
             args_schema=UpdateProductArgs,
         ),
         StructuredTool.from_function(

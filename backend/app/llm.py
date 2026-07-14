@@ -1,6 +1,7 @@
 """LangChain + Ollama Cloud LLM 封装（含工具调用）。"""
 
 import asyncio
+import json
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
@@ -51,12 +52,32 @@ def _system_prompt(current_user: models.User | None) -> str:
         "（如查热门商品、管理商品/用户）；不要回答无关内容，不要调用工具，不要延伸发挥。\n"
         "\n"
         "规则：\n"
-        "1. 始终用简体中文回复用户，不要输出英文思考过程、计划步骤或内部独白。\n"
+        "1. 始终用简体中文面对用户；思考过程可写简短中文步骤，但最终回复禁止英文独白，"
+        "禁止把工具参数 / JSON 发给用户。\n"
         "2. 用户寒暄、确认在线（如「在吗」「你好」）时：直接简短中文回复并说明可协助的范围，"
         "不要调用任何工具，也不要继续执行历史对话里未完成的批量任务。\n"
-        "3. 只有用户明确要求查/增/改/删本系统数据时才调用工具；一次回复里写操作（创建/更新/删除）"
-        "不要贪多，优先少量确认后再继续。商品名称必须唯一：已存在同名商品时不要重复创建，"
-        "应提示名称已存在（可建议改名或改为更新已有商品）。\n"
+        "3. 只有用户明确要求查/增/改/删本系统数据时才调用工具；你只能通过工具读写数据库。\n"
+        "\n"
+        "【数据操作方法】可用工具即全部能力：\n"
+        "- 商品：list_products / get_product / create_product / update_product / delete_product\n"
+        "- 用户：list_users / get_user / create_user / update_user / delete_user\n"
+        "- 热门商品：list_hot_products（公开，无需登录）\n"
+        "\n"
+        "复杂任务允许边想边调用工具边改，推荐节奏：\n"
+        "① 先复述用户目标（一句话）\n"
+        "② 先查后列：用 list_* 查出候选（page_size 建议 100）；若 total 大于本页数量，"
+        "必须继续 page=2,3…翻页直到拿全。在思考中列出将处理的项并核对是否符合条件\n"
+        "③ 再改：对核对通过的目标，自己算出新值，并在同一轮尽量并行多次调用 update_*；"
+        "不要每次只改 1～2 个；没改完禁止总结，必须继续下一轮改剩余项\n"
+        "④ 收尾前必须再 list 一次，确认没有遗漏符合条件的项；确认没有后才中文总结"
+        "（名称、ID、旧值→新值）\n"
+        "\n"
+        "示例：「把价格超过100的改成100以下随机价」→ 先 list 全部商品（含翻页）→ "
+        "筛出 price>100 的列出来核对 → 再对它们并行 update → 再 list 确认已无 price>100 → 中文总结。\n"
+        "\n"
+        "创建商品：名称必填；描述/价格/库存缺省时可自行补合理值。"
+        "商品名称必须唯一，已存在同名时不要重复创建。\n"
+        "\n"
         "4. 权限：\n"
         "   - 「热门商品」查询是公开的：未登录也可直接调用 list_hot_products，不要要求登录。\n"
         "   - 其余商品/用户的查询、创建、更新、删除必须已登录。\n"
@@ -64,13 +85,13 @@ def _system_prompt(current_user: models.User | None) -> str:
         "立刻直接回复请先去导航栏登录，禁止追问价格、库存、描述等字段，禁止调用需登录的工具，"
         "禁止承诺稍后帮其添加或继续收集信息。\n"
         "   - 若工具返回未登录，同样提示先去导航栏登录。\n"
-        "5. 操作完成后用简洁中文总结；查询结果整理成易读列表。"
-        "若上文已列出商品/用户及其 ID，后续改删时直接使用这些 ID，不要再向用户索要。\n"
-        "6. 不要把 JSON 参数当最终回复发给用户，应调用对应工具。"
+        "5. 若上文已列出商品/用户及其 ID，后续改删时直接使用这些 ID，不要再向用户索要。"
     )
 
-MAX_TOOL_ROUNDS = 6
-MAX_WRITES_PER_REQUEST = 3
+MAX_TOOL_ROUNDS = 20
+MAX_WRITES_PER_REQUEST = 40
+LLM_STREAM_RETRIES = 2
+MAX_AUTO_CONTINUES = 6
 WRITE_TOOLS = frozenset(
     {
         "create_product",
@@ -216,8 +237,101 @@ def _normalize_tool_calls(tool_calls: Any) -> list[dict[str, Any]]:
     return normalized
 
 
-def _fallback_text() -> str:
+def _parse_tool_json(result: str) -> dict[str, Any] | None:
+    try:
+        data = json.loads(result)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _format_product_line(product: dict[str, Any], *, changed: dict[str, Any] | None = None) -> str:
+    name = product.get("name") or f"ID {product.get('id')}"
+    pid = product.get("id")
+    bits = [f"「{name}」(ID {pid})"]
+    if changed:
+        for key, label in (("price", "价格"), ("stock", "库存"), ("description", "描述"), ("name", "名称")):
+            if key in changed and changed[key] is not None:
+                bits.append(f"{label}→{changed[key]}")
+    else:
+        if "price" in product:
+            bits.append(f"价格 {product['price']}")
+        if "stock" in product:
+            bits.append(f"库存 {product['stock']}")
+    return "，".join(bits)
+
+
+def _note_from_tool_result(name: str, args: dict[str, Any], result: str) -> str | None:
+    """从写操作工具结果提炼一条中文摘要；失败或不相关则返回 None。"""
+    data = _parse_tool_json(result)
+    if data is None:
+        return None
+    if data.get("error"):
+        return f"{_tool_label(name)}失败：{data['error']}"
+
+    if name == "create_product" and data.get("ok"):
+        product = data.get("product") or {}
+        return f"已创建商品 {_format_product_line(product)}"
+
+    if name == "update_product" and data.get("ok"):
+        product = data.get("product") or {}
+        changed = {k: args[k] for k in ("name", "description", "price", "stock") if k in args}
+        return f"已更新商品 {_format_product_line(product, changed=changed)}"
+
+    if name == "delete_product" and data.get("ok"):
+        deleted_id = data.get("deleted_id")
+        return f"已删除商品 ID {deleted_id}"
+
+    if name == "create_user" and data.get("ok"):
+        user = data.get("user") or {}
+        return f"已创建用户「{user.get('username')}」(ID {user.get('id')})"
+
+    if name == "update_user" and data.get("ok"):
+        user = data.get("user") or {}
+        return f"已更新用户「{user.get('username')}」(ID {user.get('id')})"
+
+    if name == "delete_user" and data.get("ok"):
+        return f"已删除用户 ID {data.get('deleted_id')}"
+
+    return None
+
+
+def _is_weak_summary(text: str) -> bool:
+    """判断模型最终回复是否过于空泛或误把工具参数当回复。"""
+    cleaned = text.strip()
+    if cleaned.startswith("{") or cleaned.startswith("["):
+        return True
+    compact = re.sub(r"\s+", "", cleaned)
+    if len(compact) > 40:
+        return False
+    weak_phrases = (
+        "操作已完成",
+        "商品列表已更新",
+        "用户数据已更新",
+        "已更新",
+        "完成了",
+        "好的",
+    )
+    return any(p in compact for p in weak_phrases)
+
+
+def _summary_from_notes(notes: list[str], *, interrupted: bool = False) -> str:
+    if notes:
+        body = "\n".join(notes)
+        if interrupted:
+            return (
+                f"{body}\n\n"
+                "以上为已完成部分；后续处理因模型异常中断，可能尚未全部完成。"
+                "请重新发送同一指令以继续处理剩余数据。"
+            )
+        return f"操作结果如下：\n{body}"
+
     mutations = get_mutations()
+    if interrupted and mutations:
+        return (
+            "部分操作已执行，但后续处理因模型异常中断，可能尚未全部完成。"
+            "请重新发送同一指令以继续处理剩余数据。"
+        )
     if "products" in mutations and "users" in mutations:
         return "操作已完成，商品和用户数据已更新。"
     if "products" in mutations:
@@ -225,6 +339,10 @@ def _fallback_text() -> str:
     if "users" in mutations:
         return "操作已完成，用户数据已更新。"
     return "我在的，有什么可以帮你？"
+
+
+def _fallback_text(notes: list[str] | None = None, *, interrupted: bool = False) -> str:
+    return _summary_from_notes(notes or [], interrupted=interrupted)
 
 
 def _tool_label(name: str) -> str:
@@ -251,11 +369,72 @@ def _brief_result(result: str) -> str:
     return text
 
 
+def _compact_tool_result_for_llm(name: str, result: str) -> str:
+    """压缩写入对话历史的工具结果，减轻后续轮次请求体积。"""
+    data = _parse_tool_json(result)
+    if data is None:
+        return result[:1200] if len(result) > 1200 else result
+
+    if name in {"list_products", "list_hot_products"} and isinstance(data.get("items"), list):
+        items = []
+        for item in data["items"]:
+            if not isinstance(item, dict):
+                continue
+            items.append(
+                {
+                    "id": item.get("id"),
+                    "name": item.get("name"),
+                    "price": item.get("price"),
+                    "stock": item.get("stock"),
+                }
+            )
+        return json.dumps({"total": data.get("total", len(items)), "items": items}, ensure_ascii=False)
+
+    if name in {"create_product", "update_product"} and isinstance(data.get("product"), dict):
+        p = data["product"]
+        return json.dumps(
+            {
+                "ok": True,
+                "product": {
+                    "id": p.get("id"),
+                    "name": p.get("name"),
+                    "price": p.get("price"),
+                    "stock": p.get("stock"),
+                },
+            },
+            ensure_ascii=False,
+        )
+
+    text = json.dumps(data, ensure_ascii=False)
+    return text[:1200] + "…" if len(text) > 1200 else text
+
+
 def _chunk_to_ai_message(chunk: AIMessageChunk) -> AIMessage:
+    tool_calls = list(getattr(chunk, "tool_calls", None) or [])
+    # 带 tool_calls 时丢掉冗长思考正文，避免下一轮请求体过大触发云端 500
+    content: Any = "" if tool_calls else chunk.content
     return AIMessage(
-        content=chunk.content,
-        tool_calls=list(getattr(chunk, "tool_calls", None) or []),
+        content=content,
+        tool_calls=tool_calls,
         id=getattr(chunk, "id", None),
+    )
+
+
+def _is_transient_llm_error(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return any(
+        token in text
+        for token in (
+            "500",
+            "502",
+            "503",
+            "504",
+            "internal server error",
+            "timeout",
+            "temporar",
+            "rate limit",
+            "overloaded",
+        )
     )
 
 
@@ -287,6 +466,9 @@ async def chat_stream(
     messages = _to_lc_messages(history, message, current_user)
     db_token, user_token, mutations_token = set_tool_context(db, current_user)
     write_count = 0
+    action_notes: list[str] = []
+    auto_continues = 0
+    completion_checks = 0
 
     async def cancelled() -> bool:
         return bool(is_cancelled and await is_cancelled())
@@ -309,34 +491,93 @@ async def chat_stream(
             assembled: AIMessageChunk | None = None
             saw_tool_chunks = False
             leaked_to_delta = False
+            stream_error: Exception | None = None
 
-            async for chunk in llm_with_tools.astream(messages):
-                if await cancelled():
-                    yield {"done": True, "refresh": get_mutations()}
-                    return
+            for attempt in range(LLM_STREAM_RETRIES):
+                assembled = None
+                saw_tool_chunks = False
+                leaked_to_delta = False
+                stream_error = None
+                try:
+                    async for chunk in llm_with_tools.astream(messages):
+                        if await cancelled():
+                            yield {"done": True, "refresh": get_mutations()}
+                            return
 
-                assembled = chunk if assembled is None else assembled + chunk
-                tool_call_chunks = getattr(chunk, "tool_call_chunks", None) or []
-                if tool_call_chunks:
-                    saw_tool_chunks = True
+                        assembled = chunk if assembled is None else assembled + chunk
+                        tool_call_chunks = getattr(chunk, "tool_call_chunks", None) or []
+                        if tool_call_chunks:
+                            saw_tool_chunks = True
+                            if leaked_to_delta:
+                                # 先前误把正文流进回复区，收回并改到思考区
+                                yield {"clear_delta": True}
+                                leaked_to_delta = False
+
+                        piece = _content_to_str(chunk.content)
+                        if not piece:
+                            continue
+
+                        if saw_tool_chunks:
+                            yield {"status_delta": piece}
+                        else:
+                            # 尚无工具调用迹象：先流式写入回复气泡
+                            leaked_to_delta = True
+                            yield {"delta": piece}
+                    break
+                except Exception as exc:
+                    stream_error = exc
                     if leaked_to_delta:
-                        # 先前误把正文流进回复区，收回并改到思考区
                         yield {"clear_delta": True}
                         leaked_to_delta = False
+                    if attempt + 1 < LLM_STREAM_RETRIES and _is_transient_llm_error(exc):
+                        yield {"status": "模型暂时异常，正在重试…"}
+                        await asyncio.sleep(0.6 * (attempt + 1))
+                        continue
+                    break
 
-                piece = _content_to_str(chunk.content)
-                if not piece:
+            if stream_error is not None:
+                # 云端多轮抖动时：自动注入「继续」提示，让模型用已有查询结果接着改
+                can_auto_continue = (
+                    auto_continues < MAX_AUTO_CONTINUES
+                    and _is_transient_llm_error(stream_error)
+                    and (action_notes or any(
+                        isinstance(m, ToolMessage) for m in messages
+                    ))
+                )
+                if can_auto_continue:
+                    auto_continues += 1
+                    yield {"clear_delta": True}
+                    yield {
+                        "status": (
+                            f"模型中断，自动继续剩余任务"
+                            f"（{auto_continues}/{MAX_AUTO_CONTINUES}）…"
+                        )
+                    }
+                    messages.append(
+                        HumanMessage(
+                            content=(
+                                "上一轮模型调用中断。请根据对话中已有的查询结果与工具结果，"
+                                "继续完成用户尚未做完的剩余操作；不要重复已经成功的写操作。"
+                                "尽量在同一轮并行发起多个 update/create/delete。"
+                                "改完前不要总结；可先再 list 核对是否还有遗漏，再继续改。"
+                                "全部完成后用中文总结具体改动，不要输出 JSON。"
+                            )
+                        )
+                    )
                     continue
 
-                if saw_tool_chunks:
-                    yield {"status_delta": piece}
-                else:
-                    # 尚无工具调用迹象：先流式写入回复气泡
-                    leaked_to_delta = True
-                    yield {"delta": piece}
+                if get_mutations() or action_notes:
+                    yield {"clear_delta": True}
+                    async for event in _soft_stream(
+                        "delta", _fallback_text(action_notes, interrupted=True)
+                    ):
+                        yield event
+                    yield {"done": True, "refresh": get_mutations()}
+                    return
+                raise stream_error
 
             if assembled is None:
-                yield {"delta": _fallback_text()}
+                yield {"delta": _fallback_text(action_notes)}
                 yield {"done": True, "refresh": get_mutations()}
                 return
 
@@ -344,20 +585,54 @@ async def chat_stream(
             tool_calls = _normalize_tool_calls(getattr(response, "tool_calls", None))
 
             if not tool_calls:
-                # 正文已在上方流式写入 delta；若模型只出了空内容则兜底
-                if not _content_to_str(response.content).strip():
+                # 写操作后最多强制收尾核对 2 次，避免只改一部分就提前总结
+                if action_notes and completion_checks < 2:
+                    completion_checks += 1
+                    yield {"clear_delta": True}
+                    yield {"status": "收尾核对中，检查是否还有遗漏…"}
+                    if _content_to_str(response.content).strip():
+                        messages.append(response)
+                    messages.append(
+                        HumanMessage(
+                            content=(
+                                "请先再调用 list_products（page_size=100，必要时翻页）核对："
+                                "是否还有符合用户条件、尚未改完的商品。"
+                                "若有，立即在同一轮并行 update 剩余项，不要总结；"
+                                "若确认没有遗漏了，再用中文总结本次全部改动。"
+                            )
+                        )
+                    )
+                    continue
+
+                # 正文已在上方流式写入 delta；空内容 / JSON / 空泛总结 → 用明细兜底
+                final_text = _content_to_str(response.content).strip()
+                if not final_text:
                     yield {"clear_delta": True}
                     yield {"status": "正在生成回复…"}
-                    produced = False
-                    async for chunk in plain_llm.astream(messages):
-                        if await cancelled():
-                            break
-                        piece = _content_to_str(chunk.content)
-                        if piece:
-                            produced = True
-                            yield {"delta": piece}
-                    if not produced:
-                        yield {"delta": _fallback_text()}
+                    produced_parts: list[str] = []
+                    try:
+                        async for chunk in plain_llm.astream(messages):
+                            if await cancelled():
+                                break
+                            piece = _content_to_str(chunk.content)
+                            if piece:
+                                produced_parts.append(piece)
+                                yield {"delta": piece}
+                    except Exception:
+                        produced_parts = []
+                    produced_text = "".join(produced_parts).strip()
+                    if not produced_text or _is_weak_summary(produced_text):
+                        yield {"clear_delta": True}
+                        async for event in _soft_stream(
+                            "delta", _fallback_text(action_notes)
+                        ):
+                            yield event
+                elif _is_weak_summary(final_text):
+                    yield {"clear_delta": True}
+                    async for event in _soft_stream(
+                        "delta", _fallback_text(action_notes)
+                    ):
+                        yield event
                 yield {"done": True, "refresh": get_mutations()}
                 return
 
@@ -402,6 +677,10 @@ async def chat_stream(
                 else:
                     result = await _run_tool_async(name, call["args"])
 
+                note = _note_from_tool_result(name, call["args"], result)
+                if note:
+                    action_notes.append(note)
+
                 result_line = f"工具结果：{_brief_result(result)}"
                 yield {"status": ""}
                 async for event in _soft_stream("status_delta", result_line, chunk_size=12):
@@ -409,7 +688,7 @@ async def chat_stream(
 
                 messages.append(
                     ToolMessage(
-                        content=result,
+                        content=_compact_tool_result_for_llm(name, result),
                         tool_call_id=call["id"],
                         name=name,
                     )
@@ -420,16 +699,22 @@ async def chat_stream(
             return
 
         yield {"status": "正在生成回复…"}
-        produced = False
-        async for chunk in plain_llm.astream(messages):
-            if await cancelled():
-                break
-            text = _content_to_str(chunk.content)
-            if text:
-                produced = True
-                yield {"delta": text}
-        if not produced:
-            yield {"delta": _fallback_text()}
+        produced_parts: list[str] = []
+        try:
+            async for chunk in plain_llm.astream(messages):
+                if await cancelled():
+                    break
+                text = _content_to_str(chunk.content)
+                if text:
+                    produced_parts.append(text)
+                    yield {"delta": text}
+        except Exception:
+            produced_parts = []
+        produced_text = "".join(produced_parts).strip()
+        if not produced_text or _is_weak_summary(produced_text):
+            yield {"clear_delta": True}
+            async for event in _soft_stream("delta", _fallback_text(action_notes)):
+                yield event
         yield {"done": True, "refresh": get_mutations()}
     finally:
         reset_tool_context(db_token, user_token, mutations_token)
