@@ -4,6 +4,7 @@ export interface Product {
   description: string | null;
   price: number;
   stock: number;
+  clickCount: number;
   created_at: string;
   updated_at: string;
 }
@@ -18,30 +19,6 @@ export interface ProductPayload {
 export interface ProductList {
   total: number;
   items: Product[];
-}
-
-export interface HotProduct {
-  id: number;
-  name: string;
-  description: string | null;
-  price: number;
-  stock: number;
-  sort_order: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface HotProductPayload {
-  name: string;
-  description: string | null;
-  price: number;
-  stock: number;
-  sort_order: number;
-}
-
-export interface HotProductList {
-  total: number;
-  items: HotProduct[];
 }
 
 export interface User {

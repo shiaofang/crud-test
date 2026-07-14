@@ -8,7 +8,6 @@ const router = useRouter();
 const auth = useAuth();
 
 const activeMenu = computed(() => {
-  if (route.path.startsWith("/admin/hot-products")) return "/admin/hot-products";
   if (route.path.startsWith("/admin/products")) return "/admin/products";
   return route.path;
 });
@@ -36,7 +35,6 @@ function handleLogout() {
           class="nav-menu"
         >
           <el-menu-item index="/">首页</el-menu-item>
-          <el-menu-item v-if="auth.isLoggedIn.value" index="/admin/hot-products">热门商品管理</el-menu-item>
           <el-menu-item v-if="auth.isLoggedIn.value" index="/admin/products">商品管理</el-menu-item>
         </el-menu>
 

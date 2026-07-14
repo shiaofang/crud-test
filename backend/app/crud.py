@@ -34,6 +34,25 @@ def get_products(
     return total, list(items)
 
 
+def get_hot_products(
+    db: Session, limit: int = 10, keyword: str | None = None
+) -> list[models.Product]:
+    """按点击量取热门商品（默认前 10）。"""
+    stmt = select(models.Product)
+    if keyword:
+        stmt = stmt.where(models.Product.name.like(f"%{keyword}%"))
+    items = (
+        db.execute(
+            stmt.order_by(models.Product.clickCount.desc(), models.Product.id.desc()).limit(
+                limit
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return list(items)
+
+
 def create_product(db: Session, product: schemas.ProductCreate) -> models.Product:
     """创建并持久化商品，返回落库后的实例。"""
     db_product = models.Product(**product.model_dump())
@@ -77,6 +96,7 @@ def get_user(db: Session, user_id: int) -> models.User | None:
 
 
 def create_user(db: Session, user: schemas.UserRegister, hashed_password: str) -> models.User:
+    """创建并持久化用户，返回落库后的实例。"""
     db_user = models.User(
         username=user.username,
         email=user.email,
@@ -86,58 +106,3 @@ def create_user(db: Session, user: schemas.UserRegister, hashed_password: str) -
     db.commit()
     db.refresh(db_user)
     return db_user
-
-
-def get_hot_product(db: Session, hot_product_id: int) -> models.HotProduct | None:
-    return db.get(models.HotProduct, hot_product_id)
-
-
-def get_hot_products(
-    db: Session, skip: int = 0, limit: int = 20, keyword: str | None = None
-) -> tuple[int, list[models.HotProduct]]:
-    stmt = select(models.HotProduct)
-    count_stmt = select(func.count()).select_from(models.HotProduct)
-
-    if keyword:
-        pattern = f"%{keyword}%"
-        stmt = stmt.where(models.HotProduct.name.like(pattern))
-        count_stmt = count_stmt.where(models.HotProduct.name.like(pattern))
-
-    total = db.execute(count_stmt).scalar_one()
-    items = (
-        db.execute(
-            stmt.order_by(models.HotProduct.sort_order.asc(), models.HotProduct.id.desc())
-            .offset(skip)
-            .limit(limit)
-        )
-        .scalars()
-        .all()
-    )
-    return total, list(items)
-
-
-def create_hot_product(db: Session, product: schemas.HotProductCreate) -> models.HotProduct:
-    db_product = models.HotProduct(**product.model_dump())
-    db.add(db_product)
-    db.commit()
-    db.refresh(db_product)
-    return db_product
-
-
-def update_hot_product(
-    db: Session, db_product: models.HotProduct, product: schemas.HotProductUpdate
-) -> models.HotProduct:
-    for field, value in product.model_dump(exclude_unset=True).items():
-        setattr(db_product, field, value)
-    db.commit()
-    db.refresh(db_product)
-    return db_product
-
-
-def delete_hot_product(db: Session, db_product: models.HotProduct) -> None:
-    db.delete(db_product)
-    db.commit()
-
-
-def count_hot_products(db: Session) -> int:
-    return db.execute(select(func.count()).select_from(models.HotProduct)).scalar_one()

@@ -12,18 +12,28 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import inspect, text
 
 from .config import settings
-from .database import Base, SessionLocal, engine
+from .database import Base, engine
 from .routers import auth, health, hot_products, products
-from .seed import seed_hot_products
 
 API_PREFIX = "/api"
 
 Base.metadata.create_all(bind=engine)
 
-with SessionLocal() as db:
-    seed_hot_products(db)
+with engine.begin() as conn:
+    # 热门商品已改为按商品表点击量统计，删除旧表（若存在）
+    conn.execute(text("DROP TABLE IF EXISTS hot_products"))
+    # 已有库补齐点击量字段
+    columns = {col["name"] for col in inspect(engine).get_columns("products")}
+    if "clickCount" not in columns:
+        conn.execute(
+            text(
+                "ALTER TABLE products ADD COLUMN clickCount INT NOT NULL DEFAULT 0 "
+                "COMMENT '点击量'"
+            )
+        )
 
 app = FastAPI(title="商品管理 CRUD API", version="1.0.0")
 

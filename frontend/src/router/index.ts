@@ -27,12 +27,6 @@ const router = createRouter({
       component: () => import("../views/ProductsAdmin.vue"),
       meta: { requiresAuth: true },
     },
-    {
-      path: "/admin/hot-products",
-      name: "admin-hot-products",
-      component: () => import("../views/HotProductsAdmin.vue"),
-      meta: { requiresAuth: true },
-    },
   ],
 });
 

@@ -2,21 +2,17 @@
 import { onMounted, ref } from "vue";
 import { Search } from "@element-plus/icons-vue";
 import { hotProductApi } from "../api";
-import type { HotProduct } from "../types";
+import type { Product } from "../types";
 
 const loading = ref(false);
-const products = ref<HotProduct[]>([]);
+const products = ref<Product[]>([]);
 const total = ref(0);
-const page = ref(1);
-const pageSize = ref(12);
 const keyword = ref("");
 
 async function fetchData() {
   loading.value = true;
   try {
     const res = await hotProductApi.list({
-      page: page.value,
-      page_size: pageSize.value,
       keyword: keyword.value || undefined,
     });
     products.value = res.items;
@@ -29,7 +25,6 @@ async function fetchData() {
 }
 
 function handleSearch() {
-  page.value = 1;
   fetchData();
 }
 
@@ -62,7 +57,7 @@ onMounted(fetchData);
     <section class="products-section">
       <div class="section-header">
         <h2>热门商品</h2>
-        <span class="count">共 {{ total }} 件</span>
+        <span class="count">点击量 Top {{ total }}</span>
       </div>
 
       <div v-loading="loading" class="product-grid">
@@ -80,26 +75,18 @@ onMounted(fetchData);
             <p class="product-desc">{{ item.description || "暂无描述" }}</p>
             <div class="product-footer">
               <span class="product-price">￥{{ Number(item.price).toFixed(2) }}</span>
-              <el-tag :type="item.stock > 0 ? 'success' : 'info'" size="small">
-                {{ item.stock > 0 ? `库存 ${item.stock}` : "缺货" }}
-              </el-tag>
+              <div class="product-meta">
+                <el-tag type="warning" size="small">点击 {{ item.clickCount }}</el-tag>
+                <el-tag :type="item.stock > 0 ? 'success' : 'info'" size="small">
+                  {{ item.stock > 0 ? `库存 ${item.stock}` : "缺货" }}
+                </el-tag>
+              </div>
             </div>
           </div>
         </el-card>
       </div>
 
       <el-empty v-if="!loading && products.length === 0" description="暂无商品" />
-
-      <div v-if="total > pageSize" class="pagination">
-        <el-pagination
-          background
-          layout="prev, pager, next"
-          :total="total"
-          :current-page="page"
-          :page-size="pageSize"
-          @current-change="(p: number) => { page = p; fetchData(); }"
-        />
-      </div>
     </section>
   </div>
 </template>
@@ -210,17 +197,18 @@ onMounted(fetchData);
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
+}
+
+.product-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .product-price {
   font-size: 20px;
   font-weight: 700;
   color: #f56c6c;
-}
-
-.pagination {
-  display: flex;
-  justify-content: center;
-  margin-top: 32px;
 }
 </style>

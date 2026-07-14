@@ -24,20 +24,6 @@ def get_product_or_404(
     return product
 
 
-def get_hot_product_or_404(
-    hot_product_id: int,
-    db: Session = Depends(get_db),
-) -> models.HotProduct:
-    """按 ID 获取热门商品，不存在时抛出 404。"""
-    product = crud.get_hot_product(db, hot_product_id)
-    if product is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="热门商品不存在",
-        )
-    return product
-
-
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: Session = Depends(get_db),

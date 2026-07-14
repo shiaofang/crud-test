@@ -1,8 +1,5 @@
 import axios from "axios";
 import type {
-  HotProduct,
-  HotProductList,
-  HotProductPayload,
   LoginPayload,
   Product,
   ProductList,
@@ -58,16 +55,7 @@ export const productApi = {
 };
 
 export const hotProductApi = {
-  list(params: { page: number; page_size: number; keyword?: string }) {
-    return http.get<HotProductList>("/hot-products", { params }).then((r) => r.data);
-  },
-  create(data: HotProductPayload) {
-    return http.post<HotProduct>("/hot-products", data).then((r) => r.data);
-  },
-  update(id: number, data: HotProductPayload) {
-    return http.put<HotProduct>(`/hot-products/${id}`, data).then((r) => r.data);
-  },
-  remove(id: number) {
-    return http.delete(`/hot-products/${id}`).then((r) => r.data);
+  list(params?: { keyword?: string }) {
+    return http.get<ProductList>("/hot-products", { params }).then((r) => r.data);
   },
 };

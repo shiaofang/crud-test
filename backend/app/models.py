@@ -20,23 +20,6 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
-class HotProduct(Base):
-    """热门商品表（首页展示，无需登录即可浏览）。"""
-
-    __tablename__ = "hot_products"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(100), nullable=False, comment="商品名称")
-    description: Mapped[str | None] = mapped_column(String(500), nullable=True, comment="描述")
-    price: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False, default=0, comment="价格")
-    stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0, comment="库存")
-    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, comment="排序，越小越靠前")
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now()
-    )
-
-
 class Product(Base):
     """商品表。"""
 
@@ -47,6 +30,7 @@ class Product(Base):
     description: Mapped[str | None] = mapped_column(String(500), nullable=True, comment="描述")
     price: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False, default=0, comment="价格")
     stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0, comment="库存")
+    clickCount: Mapped[int] = mapped_column(Integer, nullable=False, default=0, comment="点击量")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

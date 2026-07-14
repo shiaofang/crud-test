@@ -33,6 +33,7 @@ class ProductOut(ProductBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    clickCount: int = Field(0, ge=0, description="点击量")
     created_at: datetime
     updated_at: datetime
 
@@ -75,44 +76,3 @@ class UserOut(BaseModel):
     username: str
     email: str | None
     created_at: datetime
-
-
-class HotProductBase(BaseModel):
-    """热门商品公共字段。"""
-
-    name: str = Field(..., min_length=1, max_length=100, description="商品名称")
-    description: str | None = Field(None, max_length=500, description="描述")
-    price: float = Field(0, ge=0, description="价格")
-    stock: int = Field(0, ge=0, description="库存")
-    sort_order: int = Field(0, ge=0, description="排序，越小越靠前")
-
-
-class HotProductCreate(HotProductBase):
-    """创建热门商品的入参。"""
-
-
-class HotProductUpdate(BaseModel):
-    """更新热门商品的入参。"""
-
-    name: str | None = Field(None, min_length=1, max_length=100)
-    description: str | None = Field(None, max_length=500)
-    price: float | None = Field(None, ge=0)
-    stock: int | None = Field(None, ge=0)
-    sort_order: int | None = Field(None, ge=0)
-
-
-class HotProductOut(HotProductBase):
-    """热门商品输出模型。"""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    created_at: datetime
-    updated_at: datetime
-
-
-class HotProductList(BaseModel):
-    """热门商品分页列表。"""
-
-    total: int
-    items: list[HotProductOut]
