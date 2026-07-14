@@ -3,6 +3,7 @@ import { onMounted, ref } from "vue";
 import { Search } from "@element-plus/icons-vue";
 import { hotProductApi } from "../api";
 import type { Product } from "../types";
+import { onDataRefresh } from "../composables/useDataRefresh";
 
 const loading = ref(false);
 const products = ref<Product[]>([]);
@@ -29,14 +30,18 @@ function handleSearch() {
 }
 
 onMounted(fetchData);
+
+onDataRefresh((resources) => {
+  if (resources.includes("products")) fetchData();
+});
 </script>
 
 <template>
   <div class="home">
     <section class="hero">
       <div class="hero-content">
-        <h1>欢迎来到悦购商城</h1>
-        <p>精选好物，品质生活 · 登录后可管理商品</p>
+        <h1>智能商城管理系统</h1>
+        <p>商品与用户一站管理 · 登录后可使用智能助手</p>
         <el-input
           v-model="keyword"
           placeholder="搜索你想要的商品..."
@@ -93,9 +98,11 @@ onMounted(fetchData);
 
 <style scoped>
 .home {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 20px 40px;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0 24px 40px;
+  box-sizing: border-box;
 }
 
 .hero {

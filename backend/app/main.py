@@ -16,7 +16,7 @@ from sqlalchemy import inspect, text
 
 from .config import settings
 from .database import Base, engine
-from .routers import auth, health, hot_products, products
+from .routers import auth, chat, health, hot_products, products
 
 API_PREFIX = "/api"
 
@@ -35,7 +35,7 @@ with engine.begin() as conn:
             )
         )
 
-app = FastAPI(title="商品管理 CRUD API", version="1.0.0")
+app = FastAPI(title="智能商城管理系统 API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -49,3 +49,4 @@ app.include_router(health.router, prefix=API_PREFIX)
 app.include_router(auth.router, prefix=API_PREFIX)
 app.include_router(hot_products.router, prefix=API_PREFIX)
 app.include_router(products.router, prefix=API_PREFIX)
+app.include_router(chat.router, prefix=API_PREFIX)

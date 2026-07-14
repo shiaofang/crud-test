@@ -121,6 +121,7 @@ jobs:
           DB_PASSWORD=${{ secrets.DB_PASSWORD }}
           CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}
           JWT_SECRET=${{ secrets.JWT_SECRET }}
+          OLLAMA_API_KEY=${{ secrets.OLLAMA_API_KEY }}
           BACKEND_IMAGE=${BACKEND_IMAGE}
           NGINX_IMAGE=${NGINX_IMAGE}
           INNEREOF

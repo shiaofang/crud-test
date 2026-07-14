@@ -24,29 +24,29 @@ def get_product_or_404(
     return product
 
 
+def get_current_user_optional(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+) -> models.User | None:
+    """从 Bearer Token 解析当前用户；无 Token 或无效时返回 None。"""
+    if credentials is None:
+        return None
+    username = security.decode_access_token(credentials.credentials)
+    if username is None:
+        return None
+    return crud.get_user_by_username(db, username)
+
+
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> models.User:
     """从 Bearer Token 解析当前登录用户。"""
-    if credentials is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="未登录或令牌无效",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    username = security.decode_access_token(credentials.credentials)
-    if username is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="未登录或令牌无效",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    user = crud.get_user_by_username(db, username)
+    user = get_current_user_optional(credentials, db)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="用户不存在",
+            detail="未登录或令牌无效",
             headers={"WWW-Authenticate": "Bearer"},
         )
     return user

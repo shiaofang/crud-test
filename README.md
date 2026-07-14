@@ -1,58 +1,89 @@
-# 全栈 CRUD 示例（商品管理）
+# 智能商城管理系统
 
-一个用于练手的最小全栈项目：首页展示热门商品，后台管理商品与热门商品，支持用户注册/登录（JWT），以及 Docker Compose 本地运行与 GitHub Actions CI/CD 自动部署。
+全栈项目：**Vue 3 + FastAPI + MySQL**，首页按点击量展示热门商品，登录后管理商品；集成 **LangChain Tool Calling + SSE** 的 AI 助手（可查询/增删改商品与用户）；配套 **Docker Compose** 与 **GitHub Actions → GHCR → SSH** 自动部署。
 
-- **前端**：Vue 3 + TypeScript + Vite + Element Plus
-- **后端**：Python + FastAPI + SQLAlchemy
-- **数据库**：MySQL
+不只调用 Chat API，而是把鉴权、工具循环、流式输出、写库后前端刷新、容器化发布串成可运行闭环。应用内更完整的讲解见前端路由 **`/about`（项目介绍）**。
+
+## 技术栈
+
+| 层 | 技术 |
+| --- | --- |
+| 前端 | Vue 3、TypeScript、Vite、Element Plus、Vue Router、Axios |
+| 后端 | Python 3.11、FastAPI、SQLAlchemy 2、Pydantic、PyMySQL |
+| 鉴权 | JWT（python-jose）+ bcrypt |
+| AI | LangChain + ChatOllama（Ollama Cloud）、SSE 流式、StructuredTool |
+| 基础设施 | MySQL 8、Nginx、Docker Compose、GitHub Actions、GHCR |
+
+## 功能概览
+
+| 模块 | 说明 |
+| --- | --- |
+| 首页热门商品 | 对 `products.clickCount` 降序取 Top 3，公开可读；支持关键字搜索 |
+| 商品管理 | 登录后分页 CRUD；写接口依赖 JWT |
+| 注册 / 登录 | 密码 bcrypt 入库；JWT 存前端，路由守卫保护管理页 |
+| AI 智能助手 | 悬浮聊天；Tool Calling 操作商品/用户；未登录仅可查热门商品 |
+| 数据同步 | 助手写库成功后 SSE `done.refresh`，前端按资源名刷新列表 |
+| 部署 | 本地 Compose 一键起；push `main` 自动构建镜像并部署到服务器 |
+
+**设计取舍：** 用户管理无独立后台页，由助手工具完成；当前无 RBAC（登录用户权限相同）；`clickCount` 字段已落地，自动累加可后续扩展。
+
+## 架构
+
+```
+浏览器 (Vue SPA)
+  ├─ REST  /api/*     → Nginx → FastAPI → MySQL
+  └─ SSE   /api/chat  → FastAPI chat_stream
+                          → LangChain + Ollama（多轮 Tool Calling）
+                          → tools（ContextVar 注入 db / 当前用户）
+                          → 写库成功则 done.refresh 通知前端
+```
+
+后端分层：`routers` → `schemas` → `crud` → `models`；`dependencies` 注入会话与用户。助手侧用 `asyncio.to_thread` + 短生命周期 Session，避免阻塞事件循环。
+
+## 仓库结构
 
 ```
 crud-app/
-├── backend/                # FastAPI 后端
-│   ├── app/                # Python 应用包
-│   │   ├── __init__.py
-│   │   ├── main.py         # 入口：uvicorn app.main:app
-│   │   ├── config.py       # 配置（.env）
-│   │   ├── database.py     # 数据库连接
-│   │   ├── models.py       # ORM 模型
-│   │   ├── schemas.py      # Pydantic 请求/响应模型
-│   │   ├── crud.py         # 数据访问
-│   │   ├── security.py     # 密码哈希与 JWT
-│   │   ├── dependencies.py # 路由依赖（鉴权等）
-│   │   ├── seed.py         # 首次启动写入热门商品示例
-│   │   └── routers/        # 路由子包
-│   │       ├── auth.py
-│   │       ├── health.py
-│   │       ├── products.py
-│   │       └── hot_products.py
-│   ├── .env.example        # 本地开发环境变量模板
+├── backend/
+│   ├── app/
+│   │   ├── main.py           # FastAPI 入口、CORS、建表与字段迁移
+│   │   ├── config.py         # 环境变量（含 Ollama）
+│   │   ├── database.py
+│   │   ├── models.py         # users / products（含 clickCount）
+│   │   ├── schemas.py
+│   │   ├── crud.py
+│   │   ├── security.py       # 密码哈希与 JWT
+│   │   ├── dependencies.py
+│   │   ├── llm.py            # 工具循环、SSE 事件、登录短路
+│   │   ├── tools.py          # 商品/用户 StructuredTool
+│   │   └── routers/          # auth、products、hot_products、chat、health
+│   ├── .env.example
 │   ├── Dockerfile
-│   └── requirements.txt    # 含 email-validator（注册邮箱校验）
-├── frontend/               # Vue3 前端
-│   ├── Dockerfile          # 多阶段构建：npm build + nginx
+│   └── requirements.txt
+├── frontend/
+│   ├── Dockerfile            # 多阶段：npm build → nginx
 │   └── src/
-│       ├── views/          # Home、Login、Register、ProductsAdmin、HotProductsAdmin
-│       └── router/         # 路由与登录守卫
-├── docker/
-│   └── nginx.conf          # Nginx 反向代理配置
-├── .github/workflows/
-│   └── ci-cd.yml           # push main 自动构建 & 部署
-├── docker-compose.yml      # 本地 Docker 开发
-├── docker-compose.prod.yml # 生产环境（使用 GHCR 镜像）
-├── .env.example            # Docker Compose 环境变量模板
-└── HANDLE_DEPLOY.md        # 裸机手动部署参考（已废弃，仅供学习）
+│       ├── views/            # Home、About、Login、Register、ProductsAdmin
+│       ├── components/       # AiAssistant
+│       ├── composables/      # useAuth、useDataRefresh
+│       ├── api.ts            # Axios + SSE chat
+│       └── router/
+├── docker/nginx.conf         # 静态资源 + /api 反代（SSE 关闭缓冲）
+├── .github/workflows/ci-cd.yml
+├── docker-compose.yml
+├── docker-compose.prod.yml
+└── .env.example
 ```
+
 ## 本地开发
 
 ### 1. 后端
 
-先确保本地有一个 MySQL，并创建数据库：
+先确保本地有 MySQL，并创建数据库：
 
 ```sql
 CREATE DATABASE crud_demo CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
-
-然后：
 
 ```bash
 cd backend
@@ -64,16 +95,16 @@ python -m venv .venv
 
 pip install -r requirements.txt
 
-# 复制配置到 backend/.env（后端从此文件读取，不是项目根目录的 .env）
+# 复制配置（后端读 backend/.env，不是项目根目录）
 copy .env.example .env      # Windows
 # cp .env.example .env      # macOS/Linux
-# 编辑 .env，至少修改 DB_PASSWORD；生产环境务必修改 JWT_SECRET
+# 至少修改 DB_PASSWORD、JWT_SECRET；AI 助手需配置 OLLAMA_API_KEY
 
 uvicorn app.main:app --reload --port 8000
 ```
 
-启动后访问 http://127.0.0.1:8000/docs 可以看到自动生成的接口文档。
-表 `users`、`products`、`hot_products` 会在首次启动时自动创建；若热门商品表为空，会写入示例数据。
+- 接口文档：http://127.0.0.1:8000/docs  
+- 首次启动会 `create_all` 建表；若缺 `clickCount` 会自动补列，并删除废弃的 `hot_products` 表。
 
 ### 2. 前端
 
@@ -83,69 +114,73 @@ npm install
 npm run dev
 ```
 
-打开 http://localhost:5173 即可。开发服务器已配置代理，会把 `/api` 转发到 `http://127.0.0.1:8000`，所以不用担心跨域。
+打开 http://localhost:5173 。Vite 已将 `/api` 代理到 `http://127.0.0.1:8000`。
 
 | 路径 | 说明 |
 | --- | --- |
-| `/` | 首页，浏览热门商品（无需登录） |
+| `/` | 首页热门商品（无需登录） |
+| `/about` | 项目介绍 |
 | `/login`、`/register` | 登录 / 注册 |
 | `/admin/products` | 商品管理（需登录） |
-| `/admin/hot-products` | 热门商品管理（需登录） |
 
 ## 接口一览
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/api/health` | 健康检查 |
-| POST | `/api/auth/register` | 注册 |
-| POST | `/api/auth/login` | 登录，返回 JWT |
-| GET | `/api/auth/me` | 当前用户信息（需 Bearer Token） |
-| GET | `/api/hot-products?page=1&page_size=12&keyword=` | 分页查询热门商品（公开） |
-| GET | `/api/hot-products/{id}` | 查询单个热门商品（公开） |
-| POST | `/api/hot-products` | 新增热门商品（需登录） |
-| PUT | `/api/hot-products/{id}` | 更新热门商品（需登录） |
-| DELETE | `/api/hot-products/{id}` | 删除热门商品（需登录） |
-| GET | `/api/products?page=1&page_size=10&keyword=` | 分页查询商品（公开） |
-| GET | `/api/products/{id}` | 查询单个商品（公开） |
-| POST | `/api/products` | 新增商品（需登录） |
-| PUT | `/api/products/{id}` | 更新商品（需登录） |
-| DELETE | `/api/products/{id}` | 删除商品（需登录） |
+| 方法 | 路径 | 鉴权 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/api/health` | 公开 | 健康检查 |
+| POST | `/api/auth/register` | 公开 | 注册 |
+| POST | `/api/auth/login` | 公开 | 登录，返回 JWT |
+| GET | `/api/auth/me` | Bearer | 当前用户 |
+| GET | `/api/hot-products?keyword=` | 公开 | 点击量 Top 3 |
+| GET | `/api/products?page=&page_size=&keyword=` | 公开 | 分页商品 |
+| GET | `/api/products/{id}` | 公开 | 单个商品 |
+| POST | `/api/products` | Bearer | 新增 |
+| PUT | `/api/products/{id}` | Bearer | 更新 |
+| DELETE | `/api/products/{id}` | Bearer | 删除 |
+| POST | `/api/chat` | 可选 Bearer | AI 助手（SSE） |
+
+用户 CRUD **无独立 REST 管理接口**，仅通过助手工具完成。
+
+### 助手能力（简述）
+
+- **公开工具**：`list_hot_products`
+- **需登录**：商品/用户增删改查等工具；未登录且意图写库时短路提示登录
+- **SSE 事件**：`delta`（正文）、`status` / `status_delta`（思考与工具过程）、`done.refresh`（需刷新的资源）、`error`
+- **防护**：单轮写操作次数上限；前端可 abort，后端检测断开
 
 ## Docker 本地运行
 
-在项目根目录复制环境变量并启动全部服务（MySQL + 后端 + Nginx）。此处使用**根目录** `.env`，与上文本地开发时的 `backend/.env` 不同：
+使用**根目录** `.env`（与本地开发的 `backend/.env` 不同）：
 
 ```bash
 cp .env.example .env        # macOS/Linux
 # copy .env.example .env    # Windows
-# 编辑 .env，至少修改 DB_PASSWORD 与 JWT_SECRET
+# 编辑：DB_PASSWORD、JWT_SECRET、OLLAMA_API_KEY 等
 
 docker compose up -d --build
 ```
-浏览器访问 http://localhost 。前端在镜像构建阶段完成打包，无需手动 `npm run build` 或 scp `dist/`。
+
+浏览器访问 http://localhost 。前端在镜像构建阶段完成打包。
 
 ## CI/CD 自动部署
 
-向 `main` 分支 **push** 时，GitHub Actions 会：
+向 `main` **push** 时，GitHub Actions 会：
 
-1. 构建 backend / nginx 镜像（前端在 nginx 镜像内打包）并推送到 GHCR
-2. SSH 到服务器执行 `docker compose pull && up -d`
+1. 构建 backend / nginx 镜像（前端打进 nginx 镜像）并推送到 GHCR（`latest` + commit sha）
+2. SSH 到服务器执行 `docker compose pull && up -d`（按 sha 拉取，不可变部署）
 
-向 `main` 发起 **Pull Request** 时，仅构建镜像做校验，不 push、不部署。
+向 `main` 发起 **Pull Request** 时仅构建校验，不 push、不部署。
+
 ### 服务器一次性准备
 
 ```bash
-# 安装 Docker 与 Compose 插件
 curl -fsSL https://get.docker.com | sh
-
 mkdir -p /opt/crud-app
 ```
 
 安全组放行 **80** 端口。
 
-### GitHub Secrets 配置
-
-在仓库 **Settings → Secrets and variables → Actions** 中添加：
+### GitHub Secrets
 
 | Secret | 说明 |
 | --- | --- |
@@ -153,17 +188,26 @@ mkdir -p /opt/crud-app
 | `SERVER_USER` | SSH 用户名，如 `root` |
 | `SSH_PRIVATE_KEY` | SSH 私钥全文 |
 | `DB_PASSWORD` | MySQL root 密码 |
-| `JWT_SECRET` | JWT 签名密钥（随机长字符串） |
-| `CORS_ORIGINS` | 前端访问地址，如 `http://<你的公网IP>` |
-| `GHCR_PULL_TOKEN` | GitHub PAT，`read:packages` 权限，用于服务器拉私有镜像 |
-
-首次 push 到 main 后，Actions 会自动完成构建与发布。
+| `JWT_SECRET` | JWT 签名密钥 |
+| `CORS_ORIGINS` | 前端访问地址，如 `http://<公网IP>` |
+| `GHCR_PULL_TOKEN` | GitHub PAT，`read:packages`，服务器拉私有镜像 |
+| `OLLAMA_API_KEY` | Ollama Cloud API Key（助手调用模型） |
 
 ### 镜像命名
 
 - `ghcr.io/<owner>/<repo>-backend:<sha>`
 - `ghcr.io/<owner>/<repo>-nginx:<sha>`
 
-## 裸机部署（传统方式，仅供参考）
+## 项目亮点（摘要）
 
-生产环境已改用上文 CI/CD + Docker。若需了解 Ubuntu 裸机部署流程，见 [HANDLE_DEPLOY.md](./HANDLE_DEPLOY.md)。
+1. **Agent 落地**：Tool Calling 多轮循环 + SSE 双通道（思考过程 / 最终回复），而非一次性 Chat 补全。
+2. **双层鉴权**：HTTP JWT + 助手 ContextVar / 公开工具白名单 / 未登录写库短路。
+3. **工程闭环**：写库 → `refresh` → 前端选择性刷新；工具线程隔离 Session；Nginx 关闭 SSE 缓冲。
+4. **发布链路**：Compose 本地、Actions 构建、GHCR、SSH 按 sha 部署；PR 与 main 分流。
+
+可扩展方向：自动化测试、RBAC、HTTPS/限流、clickCount 自动累加、LLM 调用观测等。应用内 `/about` 有更完整表述。
+
+## 其它文档
+
+- [HANDLE_DEPLOY.md](./HANDLE_DEPLOY.md) — 裸机部署（已废弃，仅供学习）
+- [DOCKER_DEPLOY.md](./DOCKER_DEPLOY.md) — Docker 部署补充说明

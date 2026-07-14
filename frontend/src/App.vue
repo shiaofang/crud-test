@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAuth } from "./composables/useAuth";
+import AiAssistant from "./components/AiAssistant.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -9,6 +10,7 @@ const auth = useAuth();
 
 const activeMenu = computed(() => {
   if (route.path.startsWith("/admin/products")) return "/admin/products";
+  if (route.path.startsWith("/about")) return "";
   return route.path;
 });
 
@@ -24,7 +26,7 @@ function handleLogout() {
       <div class="navbar-inner">
         <router-link to="/" class="brand">
           <span class="brand-icon">🛒</span>
-          <span class="brand-text">悦购商城</span>
+          <span class="brand-text">智能商城管理系统</span>
         </router-link>
 
         <el-menu
@@ -47,6 +49,9 @@ function handleLogout() {
             <el-button type="primary" plain size="small" @click="router.push('/login')">登录</el-button>
             <el-button type="primary" size="small" @click="router.push('/register')">注册</el-button>
           </template>
+          <el-button text class="about-link" @click="router.push('/about')">
+            项目介绍
+          </el-button>
         </div>
       </div>
     </header>
@@ -56,8 +61,10 @@ function handleLogout() {
     </main>
 
     <footer class="footer">
-      <span>© 2026 悦购商城 · 品质生活，从这里开始</span>
+      <span>© 2026 智能商城管理系统</span>
     </footer>
+
+    <AiAssistant />
   </div>
 </template>
 
@@ -84,13 +91,14 @@ body {
 }
 
 .navbar-inner {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 20px;
+  width: 100%;
+  margin: 0;
+  padding: 0 24px;
   display: flex;
   align-items: center;
   gap: 24px;
   height: 60px;
+  box-sizing: border-box;
 }
 
 .brand {
@@ -122,6 +130,17 @@ body {
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
+}
+
+.about-link {
+  color: #606266;
+  font-size: 14px;
+  padding: 4px 8px;
+  margin-left: 4px;
+}
+
+.about-link:hover {
+  color: #409eff;
 }
 
 .username {

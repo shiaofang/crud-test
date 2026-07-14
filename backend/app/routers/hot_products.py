@@ -1,4 +1,4 @@
-"""热门商品：从商品表按点击量取前十，公开可读。"""
+"""热门商品：从商品表按点击量取 Top 3，公开可读。"""
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -14,6 +14,6 @@ def list_hot_products(
     keyword: str | None = Query(None, description="按商品名称模糊搜索"),
     db: Session = Depends(get_db),
 ) -> schemas.ProductList:
-    """返回点击量前十的商品（无需登录）。"""
-    items = crud.get_hot_products(db, limit=10, keyword=keyword)
+    """返回点击量 Top 3 的商品（无需登录）。"""
+    items = crud.get_hot_products(db, limit=3, keyword=keyword)
     return schemas.ProductList(total=len(items), items=items)

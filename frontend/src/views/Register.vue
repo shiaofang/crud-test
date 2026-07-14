@@ -64,7 +64,7 @@ async function submit() {
   <div class="auth-page">
     <el-card shadow="never" class="auth-card">
       <h2 class="title">注册账号</h2>
-      <p class="subtitle">加入悦购商城，开启购物之旅</p>
+      <p class="subtitle">注册账号，管理商品与用户</p>
 
       <el-form ref="formRef" :model="form" :rules="rules" label-width="0" size="large">
         <el-form-item prop="username">

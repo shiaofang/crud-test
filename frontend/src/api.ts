@@ -1,5 +1,6 @@
 import axios from "axios";
 import type {
+  ChatRequest,
   LoginPayload,
   Product,
   ProductList,
@@ -57,5 +58,100 @@ export const productApi = {
 export const hotProductApi = {
   list(params?: { keyword?: string }) {
     return http.get<ProductList>("/hot-products", { params }).then((r) => r.data);
+  },
+};
+
+export const chatApi = {
+  async stream(
+    data: ChatRequest,
+    handlers: {
+      onDelta: (delta: string) => void;
+      onStatus?: (status: string) => void;
+      onStatusDelta?: (delta: string) => void;
+      onClearDelta?: () => void;
+      onDone?: (refresh: string[]) => void;
+    },
+    signal?: AbortSignal,
+  ) {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    const token = localStorage.getItem("access_token");
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(data),
+      signal,
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `请求失败（${res.status}）`);
+    }
+    if (!res.body) {
+      throw new Error("浏览器不支持流式响应");
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() ?? "";
+
+      for (const chunk of chunks) {
+        const line = chunk
+          .split("\n")
+          .map((l) => l.trim())
+          .find((l) => l.startsWith("data:"));
+        if (!line) continue;
+
+        const raw = line.replace(/^data:\s*/, "");
+        if (!raw || raw === "[DONE]") continue;
+
+        let payload: {
+          delta?: string;
+          status?: string;
+          status_delta?: string;
+          clear_delta?: boolean;
+          done?: boolean;
+          refresh?: string[];
+          error?: string;
+        };
+        try {
+          payload = JSON.parse(raw);
+        } catch {
+          continue;
+        }
+
+        if (payload.error) {
+          throw new Error(payload.error);
+        }
+        if (payload.clear_delta) {
+          handlers.onClearDelta?.();
+        }
+        if (payload.status !== undefined) {
+          handlers.onStatus?.(payload.status);
+        }
+        if (payload.status_delta) {
+          handlers.onStatusDelta?.(payload.status_delta);
+        }
+        if (payload.delta) {
+          handlers.onDelta(payload.delta);
+        }
+        if (payload.done) {
+          handlers.onDone?.(payload.refresh ?? []);
+        }
+      }
+    }
   },
 };

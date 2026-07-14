@@ -1,3 +1,5 @@
+# 生产环境docker-compose.prod.yml
+
 services:
   mysql:
     image: mysql:8.0
@@ -26,7 +28,10 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: crud_demo
       CORS_ORIGINS: ${CORS_ORIGINS}
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:-}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-https://ollama.com}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gpt-oss:120b}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
       interval: 5s

@@ -43,3 +43,15 @@ export interface Token {
   access_token: string;
   token_type: string;
 }
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  /** 助手思考 / 工具调用过程，不回传给模型 */
+  steps?: string[];
+}
+
+export interface ChatRequest {
+  message: string;
+  history?: ChatMessage[];
+}

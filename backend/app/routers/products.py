@@ -4,7 +4,7 @@
 「查不到即 404」的逻辑统一交给 get_product_or_404 依赖处理。
 """
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
@@ -39,8 +39,11 @@ def create_product(
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ) -> models.Product:
-    """创建商品。"""
-    return crud.create_product(db, payload)
+    """创建商品（名称不可重复）。"""
+    try:
+        return crud.create_product(db, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.put("/{product_id}", response_model=schemas.ProductOut)
@@ -51,7 +54,10 @@ def update_product(
     _: models.User = Depends(get_current_user),
 ) -> models.Product:
     """更新商品，仅覆盖请求中显式传入的字段。"""
-    return crud.update_product(db, product, payload)
+    try:
+        return crud.update_product(db, product, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -76,3 +76,32 @@ class UserOut(BaseModel):
     username: str
     email: str | None
     created_at: datetime
+
+
+class UserUpdate(BaseModel):
+    """更新用户的入参，所有字段可选。"""
+
+    username: str | None = Field(None, min_length=3, max_length=50)
+    email: EmailStr | None = Field(None, description="邮箱")
+    password: str | None = Field(None, min_length=6, max_length=128, description="新密码")
+
+
+class UserList(BaseModel):
+    """用户分页列表响应。"""
+
+    total: int
+    items: list[UserOut]
+
+
+class ChatMessage(BaseModel):
+    """对话中的单条消息。"""
+
+    role: str = Field(..., pattern="^(user|assistant)$", description="角色")
+    content: str = Field(..., min_length=1, max_length=8000, description="内容")
+
+
+class ChatRequest(BaseModel):
+    """智能助手聊天入参。"""
+
+    message: str = Field(..., min_length=1, max_length=4000, description="用户当前消息")
+    history: list[ChatMessage] = Field(default_factory=list, max_length=40, description="历史消息")

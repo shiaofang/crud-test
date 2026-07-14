@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24 * 7
 
+    # Ollama Cloud（https://ollama.com）
+    ollama_api_key: str = ""
+    ollama_base_url: str = "https://ollama.com"
+    ollama_model: str = "gpt-oss:120b"
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     @property

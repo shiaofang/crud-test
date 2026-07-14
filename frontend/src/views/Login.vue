@@ -47,7 +47,7 @@ async function submit() {
 <template>
   <div class="auth-page">
     <el-card shadow="never" class="auth-card">
-      <h2 class="title">登录悦购商城</h2>
+      <h2 class="title">登录智能商城管理系统</h2>
       <p class="subtitle">欢迎回来，请登录您的账号</p>
 
       <el-form ref="formRef" :model="form" :rules="rules" label-width="0" size="large">

@@ -4,6 +4,7 @@ import type { FormInstance, FormRules } from "element-plus";
 import { Plus, Search } from "@element-plus/icons-vue";
 import { productApi } from "../api";
 import type { Product, ProductPayload } from "../types";
+import { onDataRefresh } from "../composables/useDataRefresh";
 
 const loading = ref(false);
 const products = ref<Product[]>([]);
@@ -113,6 +114,10 @@ async function handleDelete(row: Product) {
 }
 
 onMounted(fetchData);
+
+onDataRefresh((resources) => {
+  if (resources.includes("products")) fetchData();
+});
 </script>
 
 <template>
@@ -198,9 +203,11 @@ onMounted(fetchData);
 
 <style scoped>
 .page {
-  max-width: 1100px;
-  margin: 24px auto;
-  padding: 0 16px;
+  width: 100%;
+  max-width: none;
+  margin: 24px 0;
+  padding: 0 24px;
+  box-sizing: border-box;
 }
 .header {
   display: flex;
