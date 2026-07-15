@@ -1,16 +1,16 @@
 # 智能商城管理系统
 
-全栈项目：**Vue 3 + FastAPI + MySQL**，首页按点击量展示热门商品，登录后管理商品；集成 **LangChain Tool Calling + SSE** 的 AI 助手（可查询/增删改商品与用户）；配套 **Docker Compose** 与 **GitHub Actions → GHCR → SSH** 自动部署。
+全栈项目：**Vue 3 + FastAPI + MySQL**，登录后管理商品；集成 **LangChain Tool Calling + SSE** 的 AI 助手（可查询/增删改商品与用户）；配套 **Docker Compose** 与 **GitHub Actions → GHCR → SSH** 自动部署。
 
 不只调用 Chat API，而是把鉴权、工具循环、流式输出、写库后前端刷新、容器化发布串成可运行闭环。应用内更完整的讲解见前端路由 **`/about`（项目介绍）**。
 
 ## 界面预览
 
-### 首页热门商品
+### 首页
 
-按点击量展示 Top 3，支持关键字搜索；右下角为 AI 助手入口。
+系统入口与介绍；右下角为 AI 助手入口。
 
-![首页热门商品](docs/screenshots/home.png)
+![首页](docs/screenshots/home.png)
 
 ### 商品管理
 
@@ -32,14 +32,14 @@
 
 | 模块 | 说明 |
 | --- | --- |
-| 首页热门商品 | 对 `products.clickCount` 降序取 Top 3，公开可读；支持关键字搜索 |
+| 首页 | 系统入口与介绍 |
 | 商品管理 | 登录后分页 CRUD；写接口依赖 JWT |
 | 注册 / 登录 | 密码 bcrypt 入库；JWT 存前端，路由守卫保护管理页 |
-| AI 智能助手 | 悬浮聊天；Tool Calling 操作商品/用户；未登录仅可查热门商品 |
+| AI 智能助手 | 悬浮聊天；Tool Calling 操作商品/用户；需登录后使用 |
 | 数据同步 | 助手写库成功后 SSE `done.refresh`，前端按资源名刷新列表 |
 | 部署 | 本地 Compose 一键起；push `main` 自动构建镜像并部署到服务器 |
 
-**设计取舍：** 用户管理无独立后台页，由助手工具完成；当前无 RBAC（登录用户权限相同）；`clickCount` 字段已落地，自动累加可后续扩展。
+**设计取舍：** 用户管理无独立后台页，由助手工具完成；当前无 RBAC（登录用户权限相同）。
 
 ## AI 助手演示
 
@@ -89,14 +89,14 @@ crud-app/
 │   │   ├── main.py           # FastAPI 入口、CORS、建表与字段迁移
 │   │   ├── config.py         # 环境变量（含 Ollama）
 │   │   ├── database.py
-│   │   ├── models.py         # users / products（含 clickCount）
+│   │   ├── models.py         # users / products
 │   │   ├── schemas.py
 │   │   ├── crud.py
 │   │   ├── security.py       # 密码哈希与 JWT
 │   │   ├── dependencies.py
 │   │   ├── llm.py            # 工具循环、SSE 事件、登录短路
 │   │   ├── tools.py          # 商品/用户 StructuredTool
-│   │   └── routers/          # auth、products、hot_products、chat、health
+│   │   └── routers/          # auth、products、chat、health
 │   ├── .env.example
 │   ├── Dockerfile
 │   └── requirements.txt
@@ -145,7 +145,7 @@ uvicorn app.main:app --reload --port 8000
 ```
 
 - 接口文档：http://127.0.0.1:8000/docs  
-- 首次启动会 `create_all` 建表；若缺 `clickCount` 会自动补列，并删除废弃的 `hot_products` 表。
+- 首次启动会 `create_all` 建表。
 
 ### 2. 前端
 
@@ -159,7 +159,7 @@ npm run dev
 
 | 路径 | 说明 |
 | --- | --- |
-| `/` | 首页热门商品（无需登录） |
+| `/` | 首页（无需登录） |
 | `/about` | 项目介绍 |
 | `/login`、`/register` | 登录 / 注册 |
 | `/admin/products` | 商品管理（需登录） |
@@ -172,7 +172,6 @@ npm run dev
 | POST | `/api/auth/register` | 公开 | 注册 |
 | POST | `/api/auth/login` | 公开 | 登录，返回 JWT |
 | GET | `/api/auth/me` | Bearer | 当前用户 |
-| GET | `/api/hot-products?keyword=` | 公开 | 点击量 Top 3 |
 | GET | `/api/products?page=&page_size=&keyword=` | 公开 | 分页商品 |
 | GET | `/api/products/{id}` | 公开 | 单个商品 |
 | POST | `/api/products` | Bearer | 新增 |
@@ -184,7 +183,6 @@ npm run dev
 
 ### 助手能力（简述）
 
-- **公开工具**：`list_hot_products`
 - **需登录**：商品/用户增删改查等工具；未登录且意图写库时短路提示登录
 - **SSE 事件**：`delta`（正文）、`status` / `status_delta`（思考与工具过程）、`done.refresh`（需刷新的资源）、`error`
 - **防护**：单轮写操作次数上限；前端可 abort，后端检测断开
@@ -242,11 +240,11 @@ mkdir -p /opt/crud-app
 ## 项目亮点（摘要）
 
 1. **Agent 落地**：Tool Calling 多轮循环 + SSE 双通道（思考过程 / 最终回复），而非一次性 Chat 补全。
-2. **双层鉴权**：HTTP JWT + 助手 ContextVar / 公开工具白名单 / 未登录写库短路。
+2. **双层鉴权**：HTTP JWT + 助手 ContextVar / 未登录写库短路。
 3. **工程闭环**：写库 → `refresh` → 前端选择性刷新；工具线程隔离 Session；Nginx 关闭 SSE 缓冲。
 4. **发布链路**：Compose 本地、Actions 构建、GHCR、SSH 按 sha 部署；PR 与 main 分流。
 
-可扩展方向：自动化测试、RBAC、HTTPS/限流、clickCount 自动累加、LLM 调用观测等。应用内 `/about` 有更完整表述。
+可扩展方向：自动化测试、RBAC、HTTPS/限流、LLM 调用观测等。应用内 `/about` 有更完整表述。
 
 ## 其它文档
 

@@ -1,10 +1,24 @@
-"""LangChain + Ollama Cloud LLM 封装（含工具调用）。"""
+"""LangChain + Ollama Cloud LLM 封装（含工具调用）。
+
+本模块职责：
+1. 构造系统提示词与对话消息
+2. 用 astream 从云端模型流式取 token（LLM 侧流式）
+3. 多轮工具调用循环（查/增/改/删商品与用户）
+4. 把过程整理成事件 dict，交给 chat 路由再用 SSE 推给前端
+
+常见事件字段：
+- status / status_delta：思考过程、工具调用说明
+- delta：最终回复正文（流式增量）
+- clear_delta：清空前端回复气泡（改道或兜底时用）
+- done + refresh：结束，并告知前端要刷新哪些列表
+- error：由路由层捕获异常后包装
+"""
 
 import asyncio
 import json
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 
 from langchain_core.messages import (
     AIMessage,
@@ -29,6 +43,11 @@ from .tools import (
     set_tool_context,
 )
 
+# ---------------------------------------------------------------------------
+# 系统提示词
+# ---------------------------------------------------------------------------
+
+
 def _system_prompt(current_user: models.User | None) -> str:
     login_status = (
         f"已登录（用户名：{current_user.username}）"
@@ -40,7 +59,7 @@ def _system_prompt(current_user: models.User | None) -> str:
         f"当前用户状态：{login_status}\n"
         "\n"
         "【回答范围】仅可处理以下内容：\n"
-        "- 本系统内的商品（含热门商品）、用户数据的查询与管理\n"
+        "- 本系统内的商品、用户数据的查询与管理\n"
         "- 本系统的登录 / 注册 / 权限说明\n"
         "- 本系统功能怎么用（首页、商品管理、智能助手等）\n"
         "- 与上述直接相关的简短确认或追问\n"
@@ -49,7 +68,7 @@ def _system_prompt(current_user: models.User | None) -> str:
         "天气、新闻、娱乐、旅游、医疗、投资、写诗/作文、通用编程、数学题、"
         "翻译、闲聊八卦、其他网站/App、与本项目无关的知识问答等。\n"
         "拒绝时：用一两句中文说明你只能协助本智能商城管理系统相关问题，并简要提示可问什么"
-        "（如查热门商品、管理商品/用户）；不要回答无关内容，不要调用工具，不要延伸发挥。\n"
+        "（如管理商品/用户）；不要回答无关内容，不要调用工具，不要延伸发挥。\n"
         "\n"
         "规则：\n"
         "1. 始终用简体中文面对用户；思考过程可写简短中文步骤，但最终回复禁止英文独白，"
@@ -61,7 +80,6 @@ def _system_prompt(current_user: models.User | None) -> str:
         "【数据操作方法】可用工具即全部能力：\n"
         "- 商品：list_products / get_product / create_product / update_product / delete_product\n"
         "- 用户：list_users / get_user / create_user / update_user / delete_user\n"
-        "- 热门商品：list_hot_products（公开，无需登录）\n"
         "\n"
         "复杂任务允许边想边调用工具边改，推荐节奏：\n"
         "① 先复述用户目标（一句话）\n"
@@ -79,8 +97,7 @@ def _system_prompt(current_user: models.User | None) -> str:
         "商品名称必须唯一，已存在同名时不要重复创建。\n"
         "\n"
         "4. 权限：\n"
-        "   - 「热门商品」查询是公开的：未登录也可直接调用 list_hot_products，不要要求登录。\n"
-        "   - 其余商品/用户的查询、创建、更新、删除必须已登录。\n"
+        "   - 商品/用户的查询、创建、更新、删除必须已登录。\n"
         "   - 若当前为「未登录」且用户意图是需登录的数据库操作（即使信息不全，如只说「添加商品肥皂」），"
         "立刻直接回复请先去导航栏登录，禁止追问价格、库存、描述等字段，禁止调用需登录的工具，"
         "禁止承诺稍后帮其添加或继续收集信息。\n"
@@ -88,10 +105,16 @@ def _system_prompt(current_user: models.User | None) -> str:
         "5. 若上文已列出商品/用户及其 ID，后续改删时直接使用这些 ID，不要再向用户索要。"
     )
 
+
+# ---------------------------------------------------------------------------
+# 常量与全局缓存
+# ---------------------------------------------------------------------------
+
 MAX_TOOL_ROUNDS = 20
 MAX_WRITES_PER_REQUEST = 40
 LLM_STREAM_RETRIES = 2
 MAX_AUTO_CONTINUES = 6
+
 WRITE_TOOLS = frozenset(
     {
         "create_product",
@@ -102,8 +125,8 @@ WRITE_TOOLS = frozenset(
         "delete_user",
     }
 )
+
 TOOL_LABELS = {
-    "list_hot_products": "查询热门商品",
     "list_products": "查询商品列表",
     "get_product": "查询商品详情",
     "create_product": "创建商品",
@@ -116,8 +139,8 @@ TOOL_LABELS = {
     "delete_user": "删除用户",
 }
 
-# 无需登录即可调用的公开工具
-PUBLIC_TOOLS = frozenset({"list_hot_products"})
+# 无需登录即可调用的公开工具（当前无公开业务工具）
+PUBLIC_TOOLS: frozenset[str] = frozenset()
 
 # 未登录时用于短路拦截的数据库操作意图（避免模型先追问字段）
 _DB_INTENT_RE = re.compile(
@@ -125,7 +148,6 @@ _DB_INTENT_RE = re.compile(
     r"|(商品|产品|用户).{0,12}(添加|创建|新增|删除|修改|更新|列表|库存|价格|详情)"
     r"|增删改查|数据库操作"
 )
-_HOT_PRODUCT_INTENT_RE = re.compile(r"热门\s*(商品|产品)|最热|畅销|点击量")
 
 LOGIN_REQUIRED_REPLY = (
     "当前未登录。请先在导航栏登录后，再进行商品或用户的查询与管理操作。"
@@ -133,9 +155,15 @@ LOGIN_REQUIRED_REPLY = (
 
 _llm: ChatOllama | None = None
 _tools = build_tools()
-_tools_by_name = {t.name: t for t in _tools}
+_tools_by_name = {tool.name: tool for tool in _tools}
 
+# 客户端断开检测：无参异步函数，返回 True 表示已取消
 CancelCheck = Callable[[], Awaitable[bool]]
+
+
+# ---------------------------------------------------------------------------
+# LLM 实例
+# ---------------------------------------------------------------------------
 
 
 def get_llm() -> ChatOllama:
@@ -157,12 +185,14 @@ def get_llm() -> ChatOllama:
     return _llm
 
 
+# ---------------------------------------------------------------------------
+# 消息与内容转换
+# ---------------------------------------------------------------------------
+
+
 def _looks_like_db_intent(text: str) -> bool:
-    text = text.strip()
-    # 热门商品查询是公开的，不走登录拦截
-    if _HOT_PRODUCT_INTENT_RE.search(text):
-        return False
-    return bool(_DB_INTENT_RE.search(text))
+    """判断用户这句话是否像「要操作商品/用户数据库」。"""
+    return bool(_DB_INTENT_RE.search(text.strip()))
 
 
 def _to_lc_messages(
@@ -170,6 +200,7 @@ def _to_lc_messages(
     message: str,
     current_user: models.User | None,
 ) -> list[BaseMessage]:
+    """把前端的 history + 当前 message 转成 LangChain 消息列表。"""
     messages: list[BaseMessage] = [
         SystemMessage(content=_system_prompt(current_user))
     ]
@@ -183,6 +214,7 @@ def _to_lc_messages(
 
 
 def _content_to_str(content: Any) -> str:
+    """把模型 content（可能是 str / list / 其它）统一转成纯文本。"""
     if content is None:
         return ""
     if isinstance(content, str):
@@ -198,13 +230,21 @@ def _content_to_str(content: Any) -> str:
     return str(content)
 
 
+# ---------------------------------------------------------------------------
+# 工具执行
+# ---------------------------------------------------------------------------
+
+
 def _run_tool(name: str, args: dict[str, Any]) -> str:
+    """按名称调用已注册工具，返回字符串结果。"""
     tool = _tools_by_name.get(name)
     if tool is None:
         return f"未知工具：{name}"
     try:
         result = tool.invoke(args)
-        return result if isinstance(result, str) else str(result)
+        if isinstance(result, str):
+            return result
+        return str(result)
     except Exception as exc:
         rollback_tool_db()
         return f"工具执行失败：{exc}"
@@ -221,6 +261,7 @@ async def _run_tool_async(name: str, args: dict[str, Any]) -> str:
 
 
 def _normalize_tool_calls(tool_calls: Any) -> list[dict[str, Any]]:
+    """把模型返回的 tool_calls 统一成 [{name, args, id}, ...]。"""
     normalized: list[dict[str, Any]] = []
     for call in tool_calls or []:
         if isinstance(call, dict):
@@ -238,27 +279,48 @@ def _normalize_tool_calls(tool_calls: Any) -> list[dict[str, Any]]:
 
 
 def _parse_tool_json(result: str) -> dict[str, Any] | None:
+    """尝试把工具返回的 JSON 字符串解析成 dict；失败返回 None。"""
     try:
         data = json.loads(result)
     except (json.JSONDecodeError, TypeError):
         return None
-    return data if isinstance(data, dict) else None
+    if isinstance(data, dict):
+        return data
+    return None
 
 
-def _format_product_line(product: dict[str, Any], *, changed: dict[str, Any] | None = None) -> str:
+def _format_product_line(
+    product: dict[str, Any],
+    *,
+    changed: dict[str, Any] | None = None,
+) -> str:
+    """把商品信息格式化成一句中文摘要，供操作笔记使用。"""
     name = product.get("name") or f"ID {product.get('id')}"
-    pid = product.get("id")
-    bits = [f"「{name}」(ID {pid})"]
+    product_id = product.get("id")
+    parts = [f"「{name}」(ID {product_id})"]
+
+    field_labels = (
+        ("price", "价格"),
+        ("stock", "库存"),
+        ("description", "描述"),
+        ("name", "名称"),
+    )
     if changed:
-        for key, label in (("price", "价格"), ("stock", "库存"), ("description", "描述"), ("name", "名称")):
+        for key, label in field_labels:
             if key in changed and changed[key] is not None:
-                bits.append(f"{label}→{changed[key]}")
+                parts.append(f"{label}→{changed[key]}")
     else:
         if "price" in product:
-            bits.append(f"价格 {product['price']}")
+            parts.append(f"价格 {product['price']}")
         if "stock" in product:
-            bits.append(f"库存 {product['stock']}")
-    return "，".join(bits)
+            parts.append(f"库存 {product['stock']}")
+
+    return "，".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# 从工具结果提炼操作笔记（给用户看的中文摘要）
+# ---------------------------------------------------------------------------
 
 
 def _note_from_tool_result(name: str, args: dict[str, Any], result: str) -> str | None:
@@ -296,6 +358,11 @@ def _note_from_tool_result(name: str, args: dict[str, Any], result: str) -> str 
     return None
 
 
+# ---------------------------------------------------------------------------
+# 回复质量：弱总结检测与兜底文案
+# ---------------------------------------------------------------------------
+
+
 def _is_weak_summary(text: str) -> bool:
     """判断模型最终回复是否过于空泛或误把工具参数当回复。"""
     cleaned = text.strip()
@@ -316,6 +383,7 @@ def _is_weak_summary(text: str) -> bool:
 
 
 def _summary_from_notes(notes: list[str], *, interrupted: bool = False) -> str:
+    """根据操作笔记 / mutations 生成兜底中文总结。"""
     if notes:
         body = "\n".join(notes)
         if interrupted:
@@ -342,14 +410,17 @@ def _summary_from_notes(notes: list[str], *, interrupted: bool = False) -> str:
 
 
 def _fallback_text(notes: list[str] | None = None, *, interrupted: bool = False) -> str:
+    """模型没给出合格回复时，用操作笔记生成兜底文案。"""
     return _summary_from_notes(notes or [], interrupted=interrupted)
 
 
 def _tool_label(name: str) -> str:
+    """工具英文名 → 中文展示名。"""
     return TOOL_LABELS.get(name, name)
 
 
 def _brief_args(args: dict[str, Any]) -> str:
+    """把工具参数压成短中文，用于 status 展示。"""
     if not args:
         return ""
     parts: list[str] = []
@@ -363,6 +434,7 @@ def _brief_args(args: dict[str, Any]) -> str:
 
 
 def _brief_result(result: str) -> str:
+    """截断工具结果，避免 status 区过长。"""
     text = result.strip()
     if len(text) > 160:
         return text[:160] + "…"
@@ -375,7 +447,7 @@ def _compact_tool_result_for_llm(name: str, result: str) -> str:
     if data is None:
         return result[:1200] if len(result) > 1200 else result
 
-    if name in {"list_products", "list_hot_products"} and isinstance(data.get("items"), list):
+    if name == "list_products" and isinstance(data.get("items"), list):
         items = []
         for item in data["items"]:
             if not isinstance(item, dict):
@@ -438,6 +510,11 @@ def _is_transient_llm_error(exc: BaseException) -> bool:
     )
 
 
+# ---------------------------------------------------------------------------
+# 假流式输出（已有完整文本时，切成小段推给前端）
+# ---------------------------------------------------------------------------
+
+
 async def _soft_stream(
     event_key: str,
     text: str,
@@ -453,6 +530,11 @@ async def _soft_stream(
         await asyncio.sleep(delay)
 
 
+# ---------------------------------------------------------------------------
+# 主入口：对话流
+# ---------------------------------------------------------------------------
+
+
 async def chat_stream(
     message: str,
     history: list[ChatMessage],
@@ -460,7 +542,18 @@ async def chat_stream(
     current_user: models.User | None,
     is_cancelled: CancelCheck | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
-    """工具调用循环；思考过程与最终回复均流式产出。"""
+    """智能助手主循环：流式思考 + 工具调用 + 流式最终回复。
+
+    Args:
+        message: 用户当前输入。
+        history: 前端传来的历史对话。
+        db: 当前请求的数据库 Session。
+        current_user: 已登录用户；未登录为 None。
+        is_cancelled: 可选的取消检查（通常传 request.is_disconnected）。
+
+    Yields:
+        事件字典，由 chat 路由格式化成 SSE 推给前端。
+    """
     llm_with_tools = get_llm().bind_tools(_tools)
     plain_llm = get_llm()
     messages = _to_lc_messages(history, message, current_user)
@@ -470,8 +563,11 @@ async def chat_stream(
     auto_continues = 0
     completion_checks = 0
 
-    async def cancelled() -> bool:
-        return bool(is_cancelled and await is_cancelled())
+    async def client_disconnected() -> bool:
+        """前端是否已断开（例如用户关闭页面）。"""
+        if is_cancelled is None:
+            return False
+        return await is_cancelled()
 
     try:
         # 未登录且明显是数据库操作：直接提示登录，避免模型先追问字段
@@ -482,7 +578,7 @@ async def chat_stream(
             return
 
         for round_idx in range(MAX_TOOL_ROUNDS):
-            if await cancelled():
+            if await client_disconnected():
                 yield {"done": True, "refresh": get_mutations()}
                 return
 
@@ -500,12 +596,20 @@ async def chat_stream(
                 stream_error = None
                 try:
                     async for chunk in llm_with_tools.astream(messages):
-                        if await cancelled():
+                        if await client_disconnected():
                             yield {"done": True, "refresh": get_mutations()}
                             return
 
-                        assembled = chunk if assembled is None else assembled + chunk
-                        tool_call_chunks = getattr(chunk, "tool_call_chunks", None) or []
+                        # bind_tools 后 astream 的静态类型偏宽（AIMessage|…），运行时仍是 AIMessageChunk
+                        piece_chunk = cast(AIMessageChunk, chunk)
+                        assembled = (
+                            piece_chunk
+                            if assembled is None
+                            else cast(AIMessageChunk, assembled + piece_chunk)
+                        )
+                        tool_call_chunks = (
+                            getattr(piece_chunk, "tool_call_chunks", None) or []
+                        )
                         if tool_call_chunks:
                             saw_tool_chunks = True
                             if leaked_to_delta:
@@ -609,10 +713,10 @@ async def chat_stream(
                 if not final_text:
                     yield {"clear_delta": True}
                     yield {"status": "正在生成回复…"}
-                    produced_parts: list[str] = []
+                    produced_parts = list[str]()
                     try:
                         async for chunk in plain_llm.astream(messages):
-                            if await cancelled():
+                            if await client_disconnected():
                                 break
                             piece = _content_to_str(chunk.content)
                             if piece:
@@ -653,7 +757,7 @@ async def chat_stream(
 
             messages.append(response)
             for call in tool_calls:
-                if await cancelled():
+                if await client_disconnected():
                     yield {"done": True, "refresh": get_mutations()}
                     return
 
@@ -694,15 +798,15 @@ async def chat_stream(
                     )
                 )
 
-        if await cancelled():
+        if await client_disconnected():
             yield {"done": True, "refresh": get_mutations()}
             return
 
         yield {"status": "正在生成回复…"}
-        produced_parts: list[str] = []
+        produced_parts = list[str]()
         try:
             async for chunk in plain_llm.astream(messages):
-                if await cancelled():
+                if await client_disconnected():
                     break
                 text = _content_to_str(chunk.content)
                 if text:

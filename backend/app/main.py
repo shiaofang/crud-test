@@ -8,32 +8,24 @@
 - schemas   请求/响应数据模型
 - crud      数据访问逻辑
 - routers   HTTP 路由子包
+- llm       智能助手（大模型 + 工具调用）
+- tools     智能助手可调用的数据库工具
 """
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import inspect, text
 
 from .config import settings
 from .database import Base, engine
-from .routers import auth, chat, health, hot_products, products
+from .routers import auth, chat, health, products
 
 API_PREFIX = "/api"
 
 Base.metadata.create_all(bind=engine)
 
-with engine.begin() as conn:
-    # 热门商品已改为按商品表点击量统计，删除旧表（若存在）
-    conn.execute(text("DROP TABLE IF EXISTS hot_products"))
-    # 已有库补齐点击量字段
-    columns = {col["name"] for col in inspect(engine).get_columns("products")}
-    if "clickCount" not in columns:
-        conn.execute(
-            text(
-                "ALTER TABLE products ADD COLUMN clickCount INT NOT NULL DEFAULT 0 "
-                "COMMENT '点击量'"
-            )
-        )
+# ---------------------------------------------------------------------------
+# FastAPI 应用
+# ---------------------------------------------------------------------------
 
 app = FastAPI(title="智能商城管理系统 API", version="1.0.0")
 
@@ -47,6 +39,5 @@ app.add_middleware(
 
 app.include_router(health.router, prefix=API_PREFIX)
 app.include_router(auth.router, prefix=API_PREFIX)
-app.include_router(hot_products.router, prefix=API_PREFIX)
 app.include_router(products.router, prefix=API_PREFIX)
 app.include_router(chat.router, prefix=API_PREFIX)

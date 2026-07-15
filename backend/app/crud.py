@@ -18,52 +18,33 @@ def get_product_by_name(
     name = name.strip()
     if not name:
         return None
-    stmt = select(models.Product).where(models.Product.name == name)
+    statement = select(models.Product).where(models.Product.name == name)
     if exclude_id is not None:
-        stmt = stmt.where(models.Product.id != exclude_id)
-    return db.execute(stmt).scalar_one_or_none()
+        statement = statement.where(models.Product.id != exclude_id)
+    return db.execute(statement).scalar_one_or_none()
 
 
 def get_products(
     db: Session, skip: int = 0, limit: int = 20, keyword: str | None = None
 ) -> tuple[int, list[models.Product]]:
     """分页查询商品，返回 (总数, 当前页列表)；keyword 存在时按名称模糊匹配。"""
-    stmt = select(models.Product)
-    count_stmt = select(func.count()).select_from(models.Product)
+    statement = select(models.Product)
+    count_statement = select(func.count()).select_from(models.Product)
 
     if keyword:
         pattern = f"%{keyword}%"
-        stmt = stmt.where(models.Product.name.like(pattern))
-        count_stmt = count_stmt.where(models.Product.name.like(pattern))
+        statement = statement.where(models.Product.name.like(pattern))
+        count_statement = count_statement.where(models.Product.name.like(pattern))
 
-    total = db.execute(count_stmt).scalar_one()
+    total = db.execute(count_statement).scalar_one()
     items = (
         db.execute(
-            stmt.order_by(models.Product.id.desc()).offset(skip).limit(limit)
+            statement.order_by(models.Product.id.desc()).offset(skip).limit(limit)
         )
         .scalars()
         .all()
     )
     return total, list(items)
-
-
-def get_hot_products(
-    db: Session, limit: int = 3, keyword: str | None = None
-) -> list[models.Product]:
-    """按点击量取热门商品（默认 Top 3）。"""
-    stmt = select(models.Product)
-    if keyword:
-        stmt = stmt.where(models.Product.name.like(f"%{keyword}%"))
-    items = (
-        db.execute(
-            stmt.order_by(models.Product.clickCount.desc(), models.Product.id.desc()).limit(
-                limit
-            )
-        )
-        .scalars()
-        .all()
-    )
-    return list(items)
 
 
 def create_product(db: Session, product: schemas.ProductCreate) -> models.Product:
@@ -104,18 +85,19 @@ def delete_product(db: Session, db_product: models.Product) -> None:
 
 
 def get_user_by_username(db: Session, username: str) -> models.User | None:
-    return db.execute(
-        select(models.User).where(models.User.username == username)
-    ).scalar_one_or_none()
+    """按用户名精确查询用户，不存在时返回 None。"""
+    statement = select(models.User).where(models.User.username == username)
+    return db.execute(statement).scalar_one_or_none()
 
 
 def get_user_by_email(db: Session, email: str) -> models.User | None:
-    return db.execute(
-        select(models.User).where(models.User.email == email)
-    ).scalar_one_or_none()
+    """按邮箱精确查询用户，不存在时返回 None。"""
+    statement = select(models.User).where(models.User.email == email)
+    return db.execute(statement).scalar_one_or_none()
 
 
 def get_user(db: Session, user_id: int) -> models.User | None:
+    """按主键查询单个用户，不存在时返回 None。"""
     return db.get(models.User, user_id)
 
 
@@ -136,18 +118,18 @@ def list_users(
     db: Session, skip: int = 0, limit: int = 20, keyword: str | None = None
 ) -> tuple[int, list[models.User]]:
     """分页查询用户，返回 (总数, 当前页列表)；keyword 存在时按用户名模糊匹配。"""
-    stmt = select(models.User)
-    count_stmt = select(func.count()).select_from(models.User)
+    statement = select(models.User)
+    count_statement = select(func.count()).select_from(models.User)
 
     if keyword:
         pattern = f"%{keyword}%"
-        stmt = stmt.where(models.User.username.like(pattern))
-        count_stmt = count_stmt.where(models.User.username.like(pattern))
+        statement = statement.where(models.User.username.like(pattern))
+        count_statement = count_statement.where(models.User.username.like(pattern))
 
-    total = db.execute(count_stmt).scalar_one()
+    total = db.execute(count_statement).scalar_one()
     items = (
         db.execute(
-            stmt.order_by(models.User.id.desc()).offset(skip).limit(limit)
+            statement.order_by(models.User.id.desc()).offset(skip).limit(limit)
         )
         .scalars()
         .all()

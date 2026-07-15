@@ -32,7 +32,6 @@ class Product(Base):
     description: Mapped[str | None] = mapped_column(String(500), nullable=True, comment="描述")
     price: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False, default=0, comment="价格")
     stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0, comment="库存")
-    clickCount: Mapped[int] = mapped_column(Integer, nullable=False, default=0, comment="点击量")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

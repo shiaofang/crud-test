@@ -15,7 +15,9 @@ class ProductBase(BaseModel):
 
 
 class ProductCreate(ProductBase):
-    """创建商品的入参。"""
+    """创建商品的入参（字段与 ProductBase 相同）。"""
+
+    pass
 
 
 class ProductUpdate(BaseModel):
@@ -33,7 +35,6 @@ class ProductOut(ProductBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    clickCount: int = Field(0, ge=0, description="点击量")
     created_at: datetime
     updated_at: datetime
 

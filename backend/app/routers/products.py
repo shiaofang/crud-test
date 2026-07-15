@@ -23,27 +23,42 @@ def list_products(
 ) -> schemas.ProductList:
     """分页查询商品列表，支持按名称关键字模糊搜索。"""
     skip = (page - 1) * page_size
-    total, items = crud.get_products(db, skip=skip, limit=page_size, keyword=keyword)
+    total, items = crud.get_products(
+        db,
+        skip=skip,
+        limit=page_size,
+        keyword=keyword,
+    )
     return schemas.ProductList(total=total, items=items)
 
 
 @router.get("/{product_id}", response_model=schemas.ProductOut)
-def get_product(product: models.Product = Depends(get_product_or_404)) -> models.Product:
+def get_product(
+    product: models.Product = Depends(get_product_or_404),
+) -> models.Product:
     """获取单个商品详情。"""
     return product
 
 
-@router.post("", response_model=schemas.ProductOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=schemas.ProductOut,
+    status_code=status.HTTP_201_CREATED,
+)
 def create_product(
     payload: schemas.ProductCreate,
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    _current_user: models.User = Depends(get_current_user),
 ) -> models.Product:
-    """创建商品（名称不可重复）。"""
+    """创建商品（名称不可重复）。需要登录。"""
     try:
-        return crud.create_product(db, payload)
+        product = crud.create_product(db, payload)
+        return product
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 
 @router.put("/{product_id}", response_model=schemas.ProductOut)
@@ -51,20 +66,24 @@ def update_product(
     payload: schemas.ProductUpdate,
     product: models.Product = Depends(get_product_or_404),
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    _current_user: models.User = Depends(get_current_user),
 ) -> models.Product:
-    """更新商品，仅覆盖请求中显式传入的字段。"""
+    """更新商品，仅覆盖请求中显式传入的字段。需要登录。"""
     try:
-        return crud.update_product(db, product, payload)
+        updated = crud.update_product(db, product, payload)
+        return updated
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 
 @router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_product(
     product: models.Product = Depends(get_product_or_404),
     db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_user),
+    _current_user: models.User = Depends(get_current_user),
 ) -> None:
-    """删除商品。"""
+    """删除商品。需要登录。"""
     crud.delete_product(db, product)

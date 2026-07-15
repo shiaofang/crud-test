@@ -4,14 +4,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """应用运行所需的全部配置项。"""
+    """应用运行所需的全部配置项（可从环境变量 / .env 覆盖）。"""
 
+    # MySQL
     db_host: str = "127.0.0.1"
     db_port: int = 3306
     db_user: str = "root"
     db_password: str = ""
     db_name: str = "crud_demo"
+
+    # 前端地址，多个用英文逗号分隔
     cors_origins: str = "http://localhost:5173"
+
+    # JWT 登录令牌
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24 * 7
@@ -34,7 +39,13 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         """将逗号分隔的 CORS 白名单解析为列表。"""
-        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        origins: list[str] = []
+        for origin in self.cors_origins.split(","):
+            cleaned = origin.strip()
+            if cleaned:
+                origins.append(cleaned)
+        return origins
 
 
+# 进程内单例：其它模块通过 from app.config import settings 使用
 settings = Settings()

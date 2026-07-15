@@ -55,12 +55,6 @@ export const productApi = {
   },
 };
 
-export const hotProductApi = {
-  list(params?: { keyword?: string }) {
-    return http.get<ProductList>("/hot-products", { params }).then((r) => r.data);
-  },
-};
-
 export const chatApi = {
   async stream(
     data: ChatRequest,

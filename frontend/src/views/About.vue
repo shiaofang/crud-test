@@ -41,11 +41,11 @@ const modules = [
   },
   {
     name: "backend/app/routers",
-    desc: "HTTP 路由：auth、products、hot-products、chat、health。",
+    desc: "HTTP 路由：auth、products、chat、health。",
   },
   {
     name: "backend/app/crud.py",
-    desc: "数据库读写：用户与商品 CRUD、按 clickCount 取热门商品。",
+    desc: "数据库读写：用户与商品 CRUD。",
   },
   {
     name: "backend/app/llm.py + tools.py",
@@ -70,14 +70,14 @@ const highlights = [
     title: "鉴权贯穿 HTTP 与 Agent 两层",
     points: [
       "REST 写接口靠 JWT；助手侧用 get_current_user_optional + ContextVar 绑定本轮用户。",
-      "公开工具仅 list_hot_products；其余工具执行前校验登录，未登录意图写库时短路提示。",
+      "全部业务工具执行前校验登录，未登录意图写库时短路提示。",
       "单轮写操作上限（MAX_WRITES_PER_REQUEST），降低一次对话批量误改风险。",
     ],
   },
   {
     title: "前后端与部署形成闭环",
     points: [
-      "写库成功后 SSE done.refresh 广播，首页 / 管理页按资源名选择性刷新。",
+      "写库成功后 SSE done.refresh 广播，管理页按资源名选择性刷新。",
       "工具在 asyncio.to_thread + 短生命周期 Session 中执行，避免阻塞事件循环与跨线程复用 Session。",
       "Docker Compose + GHCR + Actions：PR 只构建校验，main 才按 commit sha 不可变部署。",
     ],
@@ -86,11 +86,9 @@ const highlights = [
 
 const features = [
   {
-    title: "首页 · 热门商品",
+    title: "首页",
     points: [
-      "热门商品不再单独建表，而是对 products 按 clickCount 降序取 Top 3（公开接口）。",
-      "支持关键字模糊搜索；clickCount 字段已落地，自动累加可后续扩展。",
-      "助手可通过 list_hot_products 查询，未登录也可用。",
+      "展示系统介绍与入口，引导登录后使用商品管理与智能助手。",
     ],
   },
   {
@@ -98,7 +96,7 @@ const features = [
     points: [
       "登录后进入「商品管理」：分页列表、关键字筛选、新增 / 编辑 / 删除。",
       "后端 products 路由写操作依赖 get_current_user，未登录返回 401。",
-      "助手写库成功后会通知前端刷新列表，首页与管理页保持同步。",
+      "助手写库成功后会通知前端刷新列表，管理页保持同步。",
     ],
   },
   {
@@ -115,7 +113,7 @@ const features = [
     points: [
       "右下角悬浮入口，可拖拽调整面板大小；发送新消息可 abort 上一请求。",
       "自然语言对话；模型通过 Tool Calling 调用商品 / 用户业务工具。",
-      "热门商品查询公开；增删改查商品/用户需登录，否则直接提示登录。",
+      "增删改查商品/用户需登录，否则直接提示登录。",
       "流式输出：思考过程与最终回复分区展示；Nginx 对 /api 关闭 proxy_buffering 保证实时到达。",
     ],
   },
@@ -134,35 +132,35 @@ const implSections = [
     title: "1. 整体架构与请求链路",
     paragraphs: [
       "采用前后端分离：浏览器加载 Vue 单页应用，业务数据一律走 /api。开发时 Vite 将 /api 代理到本机 FastAPI；生产环境由 Nginx 同域反向代理到 backend:8000，避免跨域，也方便配置 SSE 不缓冲。",
-      "后端按分层组织：routers 处理 HTTP，schemas 做入参/出参校验，crud 访问数据库，dependencies 注入会话与当前用户。启动时 create_all 建表，并对旧库做 clickCount 字段迁移、清理废弃的 hot_products 表。",
+      "后端按分层组织：routers 处理 HTTP，schemas 做入参/出参校验，crud 访问数据库，dependencies 注入会话与当前用户。启动时 create_all 建表。",
     ],
   },
   {
     title: "2. 前端实现要点",
     paragraphs: [
       "页面用 Vue 3 + Element Plus；鉴权状态集中在 useAuth（Token、当前用户、登录/退出）。Axios 实例统一加 Token、处理错误。",
-      "智能助手组件维护本地对话历史，调用 /api/chat 的 SSE：解析 delta（正文）、status / status_delta（思考过程）、done（结束与 refresh 资源列表）。收到 refresh 后通过 useDataRefresh 广播，首页与商品管理页按资源名选择性重新拉数。",
+      "智能助手组件维护本地对话历史，调用 /api/chat 的 SSE：解析 delta（正文）、status / status_delta（思考过程）、done（结束与 refresh 资源列表）。收到 refresh 后通过 useDataRefresh 广播，商品管理页按资源名选择性重新拉数。",
       "路由 meta.requiresAuth / guestOnly 配合 beforeEach，保证管理页与访客页权限一致。",
     ],
   },
   {
     title: "3. 后端 API 与数据模型",
     paragraphs: [
-      "核心表：users（用户名、邮箱、密码哈希）、products（名称、描述、价格、库存、clickCount 等）。热门商品不再单独建表，而是对 products 按点击量排序查询。",
-      "公开接口：健康检查、热门商品列表、部分读接口按设计开放。写操作与用户管理相关接口依赖 JWT。接口文档可在后端启动后访问 /docs（Swagger）。",
+      "核心表：users（用户名、邮箱、密码哈希）、products（名称、描述、价格、库存等）。",
+      "公开接口：健康检查、部分读接口按设计开放。写操作与用户管理相关接口依赖 JWT。接口文档可在后端启动后访问 /docs（Swagger）。",
     ],
   },
   {
     title: "4. 鉴权与权限设计",
     paragraphs: [
       "登录成功返回 access_token；后续请求由 HTTPBearer 解析，dependencies.get_current_user / get_current_user_optional 还原用户。密码不明文存储，使用 bcrypt。",
-      "助手侧用 ContextVar 绑定本轮 db 与 current_user。需登录工具在执行前检查登录态；未登录且意图为增删改查时，llm 层会短路提示登录。公开工具 list_hot_products 不要求登录，未登录时仍允许执行。",
+      "助手侧用 ContextVar 绑定本轮 db 与 current_user。业务工具在执行前检查登录态；未登录且意图为增删改查时，llm 层会短路提示登录。",
     ],
   },
   {
     title: "5. 智能助手（Tool Calling + SSE）",
     paragraphs: [
-      "ChatOllama 绑定 StructuredTool（热门商品、商品 CRUD、用户 CRUD）。系统提示注入当前登录状态，约束未登录时不得追问写库字段、不得假装可写库。",
+      "ChatOllama 绑定 StructuredTool（商品 CRUD、用户 CRUD）。系统提示注入当前登录状态，约束未登录时不得追问写库字段、不得假装可写库。",
       "chat_stream 多轮工具循环：模型流式输出 → 若有 tool_calls 则执行工具并把 ToolMessage 回填 → 再让模型总结。事件以 SSE 推给前端：status 展示「正在思考 / 调用工具…」，delta 展示最终中文回复。Nginx 对 /api/ 关闭 proxy_buffering，保证流式实时到达。",
       "写操作有单轮次数上限，避免一次对话批量误操作；工具在独立线程短 Session 中执行。前端发送新消息时可 abort 上一请求，后端配合断开检测，降低后台继续写库的风险。",
     ],
@@ -180,7 +178,7 @@ const tradeoffs = [
   {
     title: "已做的取舍",
     points: [
-      "热门商品从独立表收敛为 products.clickCount 排序，减少双表同步成本，启动时清理旧表并补字段。",
+      "首页仅作入口展示，商品能力集中在管理页与助手。",
       "用户管理不做独立后台页，刻意走助手工具，突出「自然语言操作业务」这条演示主线。",
       "当前无角色权限（RBAC）：任意登录用户权限相同，适合演示，生产需按角色拆分。",
     ],
@@ -190,7 +188,7 @@ const tradeoffs = [
     points: [
       "自动化测试：pytest 覆盖 auth / crud / 工具鉴权；前端关键路径或 E2E。",
       "安全加固：HTTPS、登录与 /chat 限流、Refresh Token 或 HttpOnly Cookie、细粒度 RBAC。",
-      "业务完善：首页点击累加 clickCount、结构化日志与 LLM 调用观测、数据库正式迁移工具。",
+      "业务完善：结构化日志与 LLM 调用观测、数据库正式迁移工具。",
     ],
   },
 ];
@@ -202,8 +200,8 @@ const tradeoffs = [
       <div class="hero-inner">
         <h1>项目介绍</h1>
         <p>
-          智能商城管理系统是一套可本地运行、可 Docker 部署的全栈项目：首页公开浏览热门商品，
-          登录后管理商品，并集成基于大模型工具调用（Tool Calling）的 AI 助手，配套 GitHub Actions
+          智能商城管理系统是一套可本地运行、可 Docker 部署的全栈项目：登录后管理商品，
+          并集成基于大模型工具调用（Tool Calling）的 AI 助手，配套 GitHub Actions
           自动构建与发布。
         </p>
       </div>
@@ -294,12 +292,7 @@ const tradeoffs = [
           </thead>
           <tbody>
             <tr>
-              <td>浏览 / 搜索热门商品</td>
-              <td>可以</td>
-              <td>可以</td>
-            </tr>
-            <tr>
-              <td>助手查询热门商品</td>
+              <td>浏览首页</td>
               <td>可以</td>
               <td>可以</td>
             </tr>

@@ -4,7 +4,6 @@ export interface Product {
   description: string | null;
   price: number;
   stock: number;
-  clickCount: number;
   created_at: string;
   updated_at: string;
 }
