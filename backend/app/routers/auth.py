@@ -47,11 +47,9 @@ def login(
 ) -> schemas.Token:
     """用户名密码登录，返回 JWT。"""
     user = crud.get_user_by_username(db, payload.username)
-    password_ok = (
-        user is not None
-        and security.verify_password(payload.password, user.hashed_password)
-    )
-    if not password_ok:
+    if user is None or not security.verify_password(
+        payload.password, user.hashed_password
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="用户名或密码错误",

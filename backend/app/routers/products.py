@@ -29,7 +29,10 @@ def list_products(
         limit=page_size,
         keyword=keyword,
     )
-    return schemas.ProductList(total=total, items=items)
+    return schemas.ProductList(
+        total=total,
+        items=[schemas.ProductOut.model_validate(item) for item in items],
+    )
 
 
 @router.get("/{product_id}", response_model=schemas.ProductOut)
