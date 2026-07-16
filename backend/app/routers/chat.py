@@ -3,7 +3,7 @@
 流程简述：
 1. 前端 POST /api/chat，带上当前消息与历史对话
 2. 本路由立刻返回 StreamingResponse（不会等模型整段说完）
-3. 后台生成器不断从 chat_stream 拿到事件 dict
+3. chat_stream 内部用 create_agent 跑多轮工具循环，并产出事件 dict
 4. 把每个 dict 格式化成 SSE 文本推给前端
 """
 
