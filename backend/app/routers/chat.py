@@ -52,6 +52,7 @@ async def chat(
     async def event_generator() -> AsyncIterator[str]:
         """异步生成器：产出一条条 SSE 字符串，供 StreamingResponse 写出。"""
         try:
+            print("payload", payload)
             async for event in chat_stream(
                 message=payload.message,
                 history=payload.history,

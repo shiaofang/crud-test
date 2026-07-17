@@ -11,13 +11,13 @@ class Settings(BaseSettings):
     db_port: int = 3306
     db_user: str = "root"
     db_password: str = ""
-    db_name: str = "crud_demo"
+    db_name: str = ""
 
     # 前端地址，多个用英文逗号分隔
     cors_origins: str = "http://localhost:5173"
 
     # JWT 登录令牌
-    jwt_secret: str = "change-me-in-production"
+    jwt_secret: str = ""
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24 * 7 # 7天
 

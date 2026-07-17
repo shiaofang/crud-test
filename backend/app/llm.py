@@ -3,13 +3,14 @@
 流程：
 1. 用 create_agent 跑「模型 ↔ 工具」循环（框架负责）
 2. astream 把 token / 工具进度映射成前端 SSE dict
-3. 结束时 yield done
+3. 结束时 yield done（写库成功则附带 refresh）
 
-事件字段：status / delta / done
+事件字段：status / delta / done / refresh
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, cast
 
@@ -45,6 +46,16 @@ TOOL_LABELS = {
     "delete_user": "删除用户",
 }
 
+# 写库工具 → 前端需刷新的资源名（与 useDataRefresh 的 DataResource 对齐）
+MUTATING_TOOLS: dict[str, str] = {
+    "create_product": "products",
+    "update_product": "products",
+    "delete_product": "products",
+    "create_user": "users",
+    "update_user": "users",
+    "delete_user": "users",
+}
+
 _llm: ChatOllama | None = None
 _tools = build_tools()
 
@@ -72,6 +83,8 @@ def _system_prompt(_current_user: models.User | None = None) -> str:
         "2. 用户寒暄、确认在线（如「在吗」「你好」）时：直接简短中文回复并说明可协助的范围，"
         "不要调用任何工具，也不要继续执行历史对话里未完成的批量任务。\n"
         "3. 只有用户明确要求查/增/改/删本系统数据时才调用工具；你只能通过工具读写数据库。\n"
+        "4. 工具调用全部结束后，必须再给用户一句简短中文总结（如数量、是否成功、关键名称/ID），"
+        "禁止只调工具不说话；不要复述原始 JSON。\n"
         "\n"
         "【数据操作方法】可用工具即全部能力：\n"
         "- 商品：list_products / get_product / create_product / update_product / delete_product\n"
@@ -152,6 +165,19 @@ def _tool_label(name: str) -> str:
     return TOOL_LABELS.get(name, name)
 
 
+def _mark_refresh_if_mutated(name: str, content: Any, refresh: set[str]) -> None:
+    """写库工具返回 ok 时，把对应资源记入本轮 refresh 集合。"""
+    resource = MUTATING_TOOLS.get(name)
+    if not resource:
+        return
+    try:
+        data = json.loads(_content_to_str(content))
+    except json.JSONDecodeError:
+        return
+    if isinstance(data, dict) and data.get("ok"):
+        refresh.add(resource)
+
+
 async def chat_stream(
     message: str,
     history: list[ChatMessage],
@@ -172,8 +198,10 @@ async def chat_stream(
             return False
         return await is_cancelled()
 
-    # 一旦本轮模型开始吐 tool_call，后续正文不再进回复气泡
+    # 本轮若在吐 tool_call，正文不进回复气泡；工具结束后再收最终总结
     tool_turn = False
+    replied = False
+    refresh: set[str] = set()
 
     try:
         yield {"status": "正在思考…"}
@@ -184,7 +212,7 @@ async def chat_stream(
             version="v2",
         ):
             if await client_disconnected():
-                yield {"done": True}
+                yield {"done": True, "refresh": sorted(refresh)}
                 return
 
             kind = chunk.get("type")
@@ -195,10 +223,15 @@ async def chat_stream(
                 if not isinstance(token, AIMessageChunk):
                     continue
                 if token.tool_call_chunks:
+                    # 进入工具轮：清掉可能提前流出的正文，留给结束后的总结
+                    if not tool_turn and replied:
+                        replied = False
+                        yield {"clear_delta": True}
                     tool_turn = True
                     continue
                 text = getattr(token, "text", None) or _content_to_str(token.content)
                 if text and not tool_turn:
+                    replied = True
                     yield {"delta": text}
                 continue
 
@@ -210,6 +243,9 @@ async def chat_stream(
                     continue
                 for msg in update.get("messages") or []:
                     if isinstance(msg, AIMessage) and msg.tool_calls:
+                        if replied:
+                            replied = False
+                            yield {"clear_delta": True}
                         tool_turn = False
                         for call in msg.tool_calls:
                             name = call.get("name", "")
@@ -217,13 +253,20 @@ async def chat_stream(
                     elif isinstance(msg, ToolMessage):
                         tool_turn = False
                         name = getattr(msg, "name", None) or "tool"
+                        _mark_refresh_if_mutated(name, msg.content, refresh)
                         yield {
                             "status": (
                                 f"工具结果（{_tool_label(name)}）："
                                 f"{_brief_result(msg.content)}"
                             )
                         }
+                    elif isinstance(msg, AIMessage) and not msg.tool_calls:
+                        # 部分模型工具后只在 updates 给完整终稿，messages 无 token
+                        text = _content_to_str(msg.content).strip()
+                        if text and not replied:
+                            replied = True
+                            yield {"delta": text}
 
-        yield {"done": True}
+        yield {"done": True, "refresh": sorted(refresh)}
     finally:
         reset_tool_context(tokens)
