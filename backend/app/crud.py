@@ -1,9 +1,78 @@
 """数据访问层：封装对 Product 表的增删改查，路由层只与本模块交互。"""
 
+from datetime import datetime, timezone
+from typing import Any
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import models, schemas
+
+
+def activity_to_event(row: models.Activity) -> dict[str, Any]:
+    """将 ORM 行转为前端 / SSE 使用的事件字典。"""
+    ts = row.created_at
+    if ts.tzinfo is None:
+        ts_iso = ts.replace(tzinfo=timezone.utc).isoformat()
+    else:
+        ts_iso = ts.isoformat()
+    return {
+        "id": row.id,
+        "type": row.type,
+        "action": row.action,
+        "source": row.source,
+        "message": row.message,
+        "product_id": row.product_id,
+        "product_name": row.product_name,
+        "actor": row.actor,
+        "changes": row.changes,
+        "ts": ts_iso,
+    }
+
+
+def create_activity(db: Session, event: dict[str, Any]) -> models.Activity:
+    """持久化一条商品动态，返回落库后的实例。"""
+    created_at: datetime | None = None
+    raw_ts = event.get("ts")
+    if isinstance(raw_ts, str) and raw_ts:
+        try:
+            created_at = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+            if created_at.tzinfo is not None:
+                created_at = created_at.astimezone(timezone.utc).replace(tzinfo=None)
+        except ValueError:
+            created_at = None
+
+    row = models.Activity(
+        type=str(event.get("type") or "product.updated"),
+        action=str(event.get("action") or "updated"),
+        source=str(event.get("source") or "admin"),
+        message=str(event.get("message") or ""),
+        product_id=event.get("product_id"),
+        product_name=event.get("product_name"),
+        actor=event.get("actor"),
+        changes=event.get("changes"),
+    )
+    if created_at is not None:
+        row.created_at = created_at
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def list_recent_activities(db: Session, limit: int = 50) -> list[models.Activity]:
+    """按时间倒序取最近 N 条动态（最新在前）。"""
+    limit = max(1, min(limit, 200))
+    items = (
+        db.execute(
+            select(models.Activity)
+            .order_by(models.Activity.id.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+    return list(items)
 
 
 def get_product(db: Session, product_id: int) -> models.Product | None:

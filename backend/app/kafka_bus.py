@@ -1,4 +1,4 @@
-"""Kafka 商品动态总线：Producer 发事件，Consumer 写入 ActivityHub。
+"""Kafka 商品动态总线：Producer 发事件，Consumer 落库并扇出到 ActivityHub。
 
 必须连上 Kafka 才能发/收动态，不做本机 hub 降级。
 """
@@ -13,8 +13,10 @@ from typing import Any, Literal
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
+from . import crud
 from .activity_hub import activity_hub
 from .config import settings
+from .database import SessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +151,29 @@ def emit_product_activity(
     publish_activity(event)
 
 
+def _persist_and_fanout(event: dict[str, Any]) -> dict[str, Any]:
+    """写入 MySQL 后返回带 id 的事件，供 Hub 扇出。"""
+    db = SessionLocal()
+    try:
+        row = crud.create_activity(db, event)
+        return crud.activity_to_event(row)
+    finally:
+        db.close()
+
+
+def _warm_hub_from_db(limit: int = 50) -> None:
+    """启动时从 MySQL 回填最近动态到内存 Hub。"""
+    db = SessionLocal()
+    try:
+        rows = crud.list_recent_activities(db, limit=limit)
+        # DB 为最新在前，Hub 回放需要从旧到新
+        events = [crud.activity_to_event(row) for row in reversed(rows)]
+        activity_hub.warm(events)
+        logger.info("已从 MySQL 回填 %s 条动态到 ActivityHub", len(events))
+    finally:
+        db.close()
+
+
 async def _consume_forever() -> None:
     consumer = AIOKafkaConsumer(
         settings.kafka_activity_topic,
@@ -169,10 +194,12 @@ async def _consume_forever() -> None:
                 if msg.value is None:
                     continue
                 event = json.loads(msg.value.decode("utf-8"))
-                if isinstance(event, dict):
-                    activity_hub.publish(event)
+                if not isinstance(event, dict):
+                    continue
+                persisted = await asyncio.to_thread(_persist_and_fanout, event)
+                activity_hub.publish(persisted)
             except Exception:
-                logger.exception("解析 Kafka 动态消息失败")
+                logger.exception("处理 Kafka 动态消息失败")
     finally:
         await consumer.stop()
 
@@ -183,6 +210,8 @@ async def start_kafka() -> None:
     if _started:
         return
     _loop = asyncio.get_running_loop()
+
+    await asyncio.to_thread(_warm_hub_from_db)
 
     producer = AIOKafkaProducer(
         bootstrap_servers=settings.kafka_bootstrap_servers,
