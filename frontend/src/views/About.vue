@@ -8,7 +8,7 @@ const stacks = [
       "Vite 开发与构建",
       "Element Plus UI 组件库",
       "Vue Router 路由与登录守卫",
-      "Axios 封装 HTTP / SSE 聊天",
+      "Axios 封装 HTTP；EventSource / fetch SSE",
     ],
   },
   {
@@ -17,7 +17,7 @@ const stacks = [
       "Python 3 + FastAPI",
       "SQLAlchemy 2.x ORM",
       "Pydantic / pydantic-settings 校验与配置",
-      "PyMySQL 连接 MySQL",
+      "PyMySQL 连接 MySQL；aiokafka 连接 Kafka",
       "python-jose + bcrypt（JWT / 密码哈希）",
       "LangChain + ChatOllama（工具调用与流式输出）",
     ],
@@ -25,11 +25,11 @@ const stacks = [
   {
     title: "基础设施",
     items: [
-      "MySQL 8（users / products）",
+      "MySQL 8（users / products / activities）",
+      "Apache Kafka（KRaft 单节点，商品动态总线）",
       "Docker Compose 本地一键启动",
       "Nginx 静态资源 + /api 反向代理",
-      "GitHub Actions 构建与部署",
-      "GHCR 存放 backend / nginx 镜像",
+      "GitHub Actions + GHCR 构建与部署",
     ],
   },
 ];
@@ -37,23 +37,23 @@ const stacks = [
 const modules = [
   {
     name: "frontend/src",
-    desc: "页面（views）、路由、API 封装、鉴权 composable、智能助手组件、数据刷新事件。",
+    desc: "页面（含首页实时动态）、路由、API 封装、鉴权 composable、智能助手组件、数据刷新事件。",
   },
   {
     name: "backend/app/routers",
-    desc: "HTTP 路由：auth、products、chat、health。",
+    desc: "HTTP 路由：auth、products、chat、activities、health。",
   },
   {
-    name: "backend/app/crud.py",
-    desc: "数据库读写：用户与商品 CRUD。",
+    name: "backend/app/kafka_bus.py + activity_hub.py",
+    desc: "商品动态：Kafka Producer/Consumer、落库、内存扇出到 SSE 订阅者。",
   },
   {
-    name: "backend/app/llm.py + tools.py",
-    desc: "助手编排：系统提示、工具循环、SSE 事件；业务工具与登录上下文。",
+    name: "backend/app/llm.py + tools/",
+    desc: "助手编排：系统提示、工具循环、SSE 事件；商品/用户 StructuredTool 与登录上下文。",
   },
   {
     name: "docker / CI",
-    desc: "docker-compose 编排 MySQL + 后端 + Nginx；Actions 构建镜像并 SSH 部署。",
+    desc: "docker-compose 编排 MySQL + Kafka + 后端 + Nginx；Actions 构建镜像并 SSH 部署。",
   },
 ];
 
@@ -75,11 +75,19 @@ const highlights = [
     ],
   },
   {
+    title: "Kafka 实时动态，管理端与 AI 同源展示",
+    points: [
+      "商品创建/更新/删除后发 Kafka 事件，Consumer 写入 activities 并经 ActivityHub 扇出。",
+      "首页 SSE 订阅 /api/activities/stream，区分「管理」与「AI」来源。",
+      "启动时从 MySQL 回填近期动态，新连接也能先看到最近记录。",
+    ],
+  },
+  {
     title: "前后端与部署形成闭环",
     points: [
       "写库成功后 SSE done.refresh 广播，管理页按资源名选择性刷新。",
       "工具在 asyncio.to_thread + 短生命周期 Session 中执行，避免阻塞事件循环与跨线程复用 Session。",
-      "Docker Compose + GHCR + Actions：PR 只构建校验，main 才按 commit sha 不可变部署。",
+      "Docker Compose（含 Kafka）+ GHCR + Actions：PR 只构建校验，main 才按 commit sha 不可变部署。",
     ],
   },
 ];
@@ -88,7 +96,8 @@ const features = [
   {
     title: "首页",
     points: [
-      "展示系统介绍与入口，引导登录后使用商品管理与智能助手。",
+      "系统入口，并展示基于 Kafka 的商品操作实时动态（管理端 / AI 助手）。",
+      "EventSource 订阅 /api/activities/stream；断线自动重连提示。",
     ],
   },
   {
@@ -96,7 +105,7 @@ const features = [
     points: [
       "登录后进入「商品管理」：分页列表、关键字筛选、新增 / 编辑 / 删除。",
       "后端 products 路由写操作依赖 get_current_user，未登录返回 401。",
-      "助手写库成功后会通知前端刷新列表，管理页保持同步。",
+      "写库成功后发 Kafka 动态；助手写库还会通知前端刷新列表。",
     ],
   },
   {
@@ -114,13 +123,13 @@ const features = [
       "右下角悬浮入口，可拖拽调整面板大小；发送新消息可 abort 上一请求。",
       "自然语言对话；模型通过 Tool Calling 调用商品 / 用户业务工具。",
       "增删改查商品/用户需登录，否则直接提示登录。",
-      "流式输出：思考过程与最终回复分区展示；Nginx 对 /api 关闭 proxy_buffering 保证实时到达。",
+      "流式输出：思考过程与最终回复分区展示；写商品同样进入首页动态流。",
     ],
   },
   {
     title: "容器化与 CI/CD",
     points: [
-      "本地：docker compose up 启动 MySQL、后端、Nginx。",
+      "本地：docker compose up 启动 MySQL、Kafka、后端、Nginx。",
       "生产：push main → Actions 构建并推送 GHCR 镜像 → SSH 到服务器 pull & up。",
       "PR 仅构建校验，不推送、不部署；镜像打 latest + commit sha 标签。",
     ],
@@ -132,22 +141,22 @@ const implSections = [
     title: "1. 整体架构与请求链路",
     paragraphs: [
       "采用前后端分离：浏览器加载 Vue 单页应用，业务数据一律走 /api。开发时 Vite 将 /api 代理到本机 FastAPI；生产环境由 Nginx 同域反向代理到 backend:8000，避免跨域，也方便配置 SSE 不缓冲。",
-      "后端按分层组织：routers 处理 HTTP，schemas 做入参/出参校验，crud 访问数据库，dependencies 注入会话与当前用户。启动时 create_all 建表。",
+      "后端按分层组织：routers 处理 HTTP，schemas 做入参/出参校验，crud 访问数据库，dependencies 注入会话与当前用户。启动时 create_all 建表，并拉起 Kafka 动态总线。",
     ],
   },
   {
     title: "2. 前端实现要点",
     paragraphs: [
       "页面用 Vue 3 + Element Plus；鉴权状态集中在 useAuth（Token、当前用户、登录/退出）。Axios 实例统一加 Token、处理错误。",
-      "智能助手组件维护本地对话历史，调用 /api/chat 的 SSE：解析 delta（正文）、status / status_delta（思考过程）、done（结束与 refresh 资源列表）。收到 refresh 后通过 useDataRefresh 广播，商品管理页按资源名选择性重新拉数。",
+      "首页用 EventSource 订阅商品动态 SSE；智能助手用 fetch 解析 /api/chat：delta（正文）、status / status_delta（思考过程）、done（结束与 refresh）。收到 refresh 后通过 useDataRefresh 广播，商品管理页按资源名选择性重新拉数。",
       "路由 meta.requiresAuth / guestOnly 配合 beforeEach，保证管理页与访客页权限一致。",
     ],
   },
   {
     title: "3. 后端 API 与数据模型",
     paragraphs: [
-      "核心表：users（用户名、邮箱、密码哈希）、products（名称、描述、价格、库存等）。",
-      "公开接口：健康检查、部分读接口按设计开放。写操作与用户管理相关接口依赖 JWT。接口文档可在后端启动后访问 /docs（Swagger）。",
+      "核心表：users（用户名、邮箱、密码哈希）、products（名称、描述、价格、库存等）、activities（商品操作动态持久化）。",
+      "公开接口：健康检查、商品读接口、动态 SSE。写操作依赖 JWT。接口文档可在后端启动后访问 /docs（Swagger）。",
     ],
   },
   {
@@ -166,9 +175,17 @@ const implSections = [
     ],
   },
   {
-    title: "6. 部署与运维",
+    title: "6. 商品动态（Kafka + SSE）",
     paragraphs: [
-      "Docker：backend 镜像跑 uvicorn；frontend Dockerfile 多阶段 npm build，产物打进 nginx 镜像。Compose 串联 MySQL、backend、nginx，环境变量区分本地与生产。",
+      "管理端 REST 或助手工具写商品成功后，kafka_bus 向 topic（默认 mall.activities）发送事件，区分 source=admin / ai。",
+      "Consumer 将事件写入 activities 表，再经 ActivityHub 推给所有 /api/activities/stream 订阅者；启动时从 MySQL 回填近期记录到内存 Hub。",
+      "本地开发需先起 Kafka（可用 docker compose up -d kafka）；动态能力依赖 Kafka，不做本机 hub 降级。",
+    ],
+  },
+  {
+    title: "7. 部署与运维",
+    paragraphs: [
+      "Docker：backend 镜像跑 uvicorn；frontend Dockerfile 多阶段 npm build，产物打进 nginx 镜像。Compose 串联 MySQL、Kafka、backend、nginx，环境变量区分本地与生产。",
       "CI/CD：Actions 用 Buildx 构建 backend 与 nginx 镜像，打 latest 与 commit sha 标签推到 GHCR；部署 job SSH 到服务器按 sha 拉取并 compose up -d。Secrets 管理服务器地址、SSH 密钥、DB 密码、JWT、CORS、Ollama Key、拉镜像 Token 等。",
     ],
   },
@@ -178,9 +195,10 @@ const tradeoffs = [
   {
     title: "已做的取舍",
     points: [
-      "首页仅作入口展示，商品能力集中在管理页与助手。",
+      "首页以实时动态为主入口展示，商品 CRUD 集中在管理页与助手。",
       "用户管理不做独立后台页，刻意走助手工具，突出「自然语言操作业务」这条演示主线。",
       "当前无角色权限（RBAC）：任意登录用户权限相同，适合演示，生产需按角色拆分。",
+      "商品动态必须连上 Kafka，不做无消息中间件时的本机降级。",
     ],
   },
   {
@@ -188,7 +206,7 @@ const tradeoffs = [
     points: [
       "自动化测试：pytest 覆盖 auth / crud / 工具鉴权；前端关键路径或 E2E。",
       "安全加固：HTTPS、登录与 /chat 限流、Refresh Token 或 HttpOnly Cookie、细粒度 RBAC。",
-      "业务完善：结构化日志与 LLM 调用观测、数据库正式迁移工具。",
+      "业务完善：结构化日志与 LLM 调用观测、数据库正式迁移工具、Kafka 多副本与监控。",
     ],
   },
 ];
@@ -201,15 +219,15 @@ const tradeoffs = [
         <h1>项目介绍</h1>
         <p>
           智能商城管理系统是一套可本地运行、可 Docker 部署的全栈项目：登录后管理商品，
-          并集成基于大模型工具调用（Tool Calling）的 AI 助手，配套 GitHub Actions
-          自动构建与发布。
+          集成基于大模型工具调用（Tool Calling）的 AI 助手，并以 Kafka + SSE
+          展示商品操作实时动态，配套 GitHub Actions 自动构建与发布。
         </p>
       </div>
     </section>
 
     <section class="block">
       <h2>项目亮点</h2>
-      <p class="lead">在商品管理之外，重点实现了 AI 助手（Tool Calling + SSE）、双层鉴权，以及 Docker / CI/CD 发布链路。</p>
+      <p class="lead">在商品管理之外，重点实现了 AI 助手（Tool Calling + SSE）、Kafka 实时动态、双层鉴权，以及 Docker / CI/CD 发布链路。</p>
       <div class="feature-list">
         <div v-for="item in highlights" :key="item.title" class="feature-item">
           <h3>{{ item.title }}</h3>
@@ -272,11 +290,16 @@ const tradeoffs = [
   ├─ 页面路由（Vue Router + 登录守卫）
   ├─ REST：Axios → /api/* → Nginx → FastAPI → MySQL
   │
-  └─ 助手对话：fetch SSE /api/chat
-        → FastAPI chat_stream
-        → LangChain + Ollama（可能多轮 Tool Calling）
-        → tools（ContextVar 注入 db / 当前用户）
-        → 写库成功则 SSE done.refresh 通知前端刷新</pre>
+  ├─ 助手对话：fetch SSE /api/chat
+  │     → FastAPI chat_stream
+  │     → LangChain + Ollama（可能多轮 Tool Calling）
+  │     → tools（ContextVar 注入 db / 当前用户）
+  │     → 写库成功则 SSE done.refresh 通知前端刷新
+  │
+  └─ 首页动态：EventSource SSE /api/activities/stream
+        ← ActivityHub 扇出
+        ← Kafka Consumer 落库 activities
+        ← Producer（管理端 / 助手写商品）</pre>
     </section>
 
     <section class="block">
@@ -292,7 +315,7 @@ const tradeoffs = [
           </thead>
           <tbody>
             <tr>
-              <td>浏览首页</td>
+              <td>浏览首页 / 实时动态</td>
               <td>可以</td>
               <td>可以</td>
             </tr>
