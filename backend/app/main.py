@@ -10,24 +10,42 @@
 - routers   HTTP 路由子包
 - llm       智能助手（大模型 + 工具调用）
 - tools     智能助手可调用的数据库工具
+- kafka_bus 商品动态 Kafka 总线
 """
+
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .database import Base, engine
-from .routers import auth, chat, health, products
+from .kafka_bus import start_kafka, stop_kafka
+from .routers import activities, auth, chat, health, products
 
 API_PREFIX = "/api"
 
 Base.metadata.create_all(bind=engine)
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await start_kafka()
+    try:
+        yield
+    finally:
+        await stop_kafka()
+
+
 # ---------------------------------------------------------------------------
 # FastAPI 应用
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="智能商城管理系统 API", version="1.0.0")
+app = FastAPI(
+    title="智能商城管理系统 API",
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -41,3 +59,4 @@ app.include_router(health.router, prefix=API_PREFIX)
 app.include_router(auth.router, prefix=API_PREFIX)
 app.include_router(products.router, prefix=API_PREFIX)
 app.include_router(chat.router, prefix=API_PREFIX)
+app.include_router(activities.router, prefix=API_PREFIX)

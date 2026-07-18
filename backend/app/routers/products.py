@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from .. import crud, models, schemas
 from ..database import get_db
 from ..dependencies import get_current_user, get_product_or_404
+from ..kafka_bus import emit_product_activity
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -51,11 +52,18 @@ def get_product(
 def create_product(
     payload: schemas.ProductCreate,
     db: Session = Depends(get_db),
-    _current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(get_current_user),
 ) -> models.Product:
     """创建商品（名称不可重复）。需要登录。"""
     try:
         product = crud.create_product(db, payload)
+        emit_product_activity(
+            action="created",
+            product_id=product.id,
+            product_name=product.name,
+            source="admin",
+            actor=current_user.username,
+        )
         return product
     except ValueError as exc:
         raise HTTPException(
@@ -69,11 +77,30 @@ def update_product(
     payload: schemas.ProductUpdate,
     product: models.Product = Depends(get_product_or_404),
     db: Session = Depends(get_db),
-    _current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(get_current_user),
 ) -> models.Product:
     """更新商品，仅覆盖请求中显式传入的字段。需要登录。"""
+    changes: dict = {}
+    data = payload.model_dump(exclude_unset=True)
+    if "name" in data and data["name"] != product.name:
+        changes["name"] = (product.name, data["name"])
+    if "price" in data and float(data["price"]) != float(product.price):
+        changes["price"] = (float(product.price), float(data["price"]))
+    if "stock" in data and data["stock"] != product.stock:
+        changes["stock"] = (product.stock, data["stock"])
+    if "description" in data and data["description"] != product.description:
+        changes["description"] = True
+
     try:
         updated = crud.update_product(db, product, payload)
+        emit_product_activity(
+            action="updated",
+            product_id=updated.id,
+            product_name=updated.name,
+            source="admin",
+            actor=current_user.username,
+            changes=changes or None,
+        )
         return updated
     except ValueError as exc:
         raise HTTPException(
@@ -86,7 +113,16 @@ def update_product(
 def delete_product(
     product: models.Product = Depends(get_product_or_404),
     db: Session = Depends(get_db),
-    _current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(get_current_user),
 ) -> None:
     """删除商品。需要登录。"""
+    product_id = product.id
+    product_name = product.name
     crud.delete_product(db, product)
+    emit_product_activity(
+        action="deleted",
+        product_id=product_id,
+        product_name=product_name,
+        source="admin",
+        actor=current_user.username,
+    )

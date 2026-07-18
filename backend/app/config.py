@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     ollama_base_url: str = "https://ollama.com"
     ollama_model: str = "gpt-oss:120b"
 
+    # Kafka（商品动态事件）
+    kafka_bootstrap_servers: str = "127.0.0.1:9092"
+    kafka_activity_topic: str = "mall.activities"
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     @property

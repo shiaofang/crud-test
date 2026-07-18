@@ -9,6 +9,7 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
 from .. import crud, schemas
+from ..kafka_bus import emit_product_activity
 from ._make import _DEFAULT_PAGE_SIZE, _PaginationArgs, _clamp_page_size
 from .context import _require_db, with_tool_session
 from .serialize import _json, _product_dict, _product_summary_dict
@@ -97,6 +98,12 @@ def create_product(
         db.rollback()
         return _json({"error": f"创建失败：{exc}"})
 
+    emit_product_activity(
+        action="created",
+        product_id=product.id,
+        product_name=product.name,
+        source="ai",
+    )
     return _json({"ok": True, "product": _product_dict(product)})
 
 
@@ -116,14 +123,23 @@ def update_product(
         return _json({"error": "商品不存在"})
 
     data: dict[str, Any] = {}
+    changes: dict[str, Any] = {}
     if name is not None:
         data["name"] = name
+        if name != product.name:
+            changes["name"] = (product.name, name)
     if description is not None:
         data["description"] = description
+        if description != product.description:
+            changes["description"] = True
     if price is not None:
         data["price"] = price
+        if float(price) != float(product.price):
+            changes["price"] = (float(product.price), float(price))
     if stock is not None:
         data["stock"] = stock
+        if stock != product.stock:
+            changes["stock"] = (product.stock, stock)
     if not data:
         return _json({"error": "未提供任何要更新的字段"})
 
@@ -135,6 +151,13 @@ def update_product(
         db.rollback()
         return _json({"error": f"更新失败：{exc}"})
 
+    emit_product_activity(
+        action="updated",
+        product_id=updated.id,
+        product_name=updated.name,
+        source="ai",
+        changes=changes or None,
+    )
     return _json({"ok": True, "product": _product_dict(updated)})
 
 
@@ -147,7 +170,14 @@ def delete_product(product_id: int) -> str:
     if product is None:
         return _json({"error": "商品不存在"})
 
+    name = product.name
     crud.delete_product(db, product)
+    emit_product_activity(
+        action="deleted",
+        product_id=product_id,
+        product_name=name,
+        source="ai",
+    )
     return _json({"ok": True, "deleted_id": product_id})
 
 
