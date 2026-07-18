@@ -62,6 +62,15 @@ class DeleteProductArgs(BaseModel):
     product_id: int = Field(..., ge=1, description="商品 ID")
 
 
+class DeleteProductsArgs(BaseModel):
+    product_ids: list[int] = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="要删除的商品 ID 列表",
+    )
+
+
 def _create_one_product(
     *,
     name: str,
@@ -162,6 +171,29 @@ def _update_one_product(
         changes=changes or None,
     )
     return {"ok": True, "product": _product_dict(updated)}
+
+
+def _delete_one_product(product_id: int) -> dict[str, Any]:
+    """删除单个商品，返回统一结构（供单条/批量工具复用）。"""
+    db = _require_db()
+    product = crud.get_product(db, product_id)
+    if product is None:
+        return {"ok": False, "product_id": product_id, "error": "商品不存在"}
+
+    name = product.name
+    try:
+        crud.delete_product(db, product)
+    except Exception as exc:
+        db.rollback()
+        return {"ok": False, "product_id": product_id, "error": f"删除失败：{exc}"}
+
+    emit_product_activity(
+        action="deleted",
+        product_id=product_id,
+        product_name=name,
+        source="ai",
+    )
+    return {"ok": True, "deleted_id": product_id, "deleted_name": name}
 
 
 @tool("list_products", args_schema=ListProductsArgs)
@@ -368,21 +400,64 @@ def update_products(updates: list[UpdateProductArgs] | list[dict[str, Any]]) -> 
 @tool("delete_product", args_schema=DeleteProductArgs)
 @with_tool_session
 def delete_product(product_id: int) -> str:
-    """按 ID 删除商品。"""
-    db = _require_db()
-    product = crud.get_product(db, product_id)
-    if product is None:
-        return _json({"error": "商品不存在"})
-
-    name = product.name
-    crud.delete_product(db, product)
-    emit_product_activity(
-        action="deleted",
-        product_id=product_id,
-        product_name=name,
-        source="ai",
+    """按 ID 删除单个商品。要删多个时请用 delete_products。"""
+    result = _delete_one_product(product_id)
+    if not result.get("ok"):
+        return _json({"error": result.get("error", "删除失败")})
+    return _json(
+        {
+            "ok": True,
+            "deleted_id": result["deleted_id"],
+            "deleted_name": result["deleted_name"],
+        }
     )
-    return _json({"ok": True, "deleted_id": product_id})
+
+
+@tool("delete_products", args_schema=DeleteProductsArgs)
+@with_tool_session
+def delete_products(product_ids: list[int]) -> str:
+    """一次批量删除多个商品。
+
+    用户要删 2 个及以上商品时必须用本工具，且 product_ids 必须包含全部目标（一个都不许漏），
+    不要多次调用 delete_product。
+    """
+    if not product_ids:
+        return _json({"error": "product_ids 不能为空"})
+
+    results: list[dict[str, Any]] = []
+    for raw_id in product_ids:
+        try:
+            product_id = int(raw_id)
+            if product_id < 1:
+                raise ValueError("product_id 必须 >= 1")
+        except (TypeError, ValueError) as exc:
+            results.append(
+                {"ok": False, "product_id": raw_id, "error": f"参数无效：{exc}"}
+            )
+            continue
+        results.append(_delete_one_product(product_id))
+
+    success_count = sum(1 for r in results if r.get("ok"))
+    fail_count = len(results) - success_count
+    deleted_ids = [r["deleted_id"] for r in results if r.get("ok")]
+    deleted_names = [r["deleted_name"] for r in results if r.get("ok")]
+    failed = [
+        {"product_id": r.get("product_id"), "error": r.get("error")}
+        for r in results
+        if not r.get("ok")
+    ]
+    return _json(
+        {
+            "ok": success_count > 0,
+            "requested_count": len(results),
+            "success_count": success_count,
+            "fail_count": fail_count,
+            "deleted_ids": deleted_ids,
+            "deleted_names": deleted_names,
+            "failed": failed,
+            "results": results,
+        }
+    )
 
 
 PRODUCT_TOOLS: list[BaseTool] = [
@@ -393,4 +468,5 @@ PRODUCT_TOOLS: list[BaseTool] = [
     update_product,
     update_products,
     delete_product,
+    delete_products,
 ]

@@ -41,6 +41,7 @@ TOOL_LABELS = {
     "update_product": "更新商品",
     "update_products": "批量更新商品",
     "delete_product": "删除商品",
+    "delete_products": "批量删除商品",
     "list_users": "查询用户列表",
     "get_user": "查询用户详情",
     "create_user": "创建用户",
@@ -55,6 +56,7 @@ MUTATING_TOOLS: dict[str, str] = {
     "update_product": "products",
     "update_products": "products",
     "delete_product": "products",
+    "delete_products": "products",
     "create_user": "users",
     "update_user": "users",
     "delete_user": "users",
@@ -92,7 +94,7 @@ def _system_prompt(_current_user: models.User | None = None) -> str:
         "\n"
         "【数据操作方法】可用工具即全部能力：\n"
         "- 商品：list_products / get_product / create_product / create_products / "
-        "update_product / update_products / delete_product\n"
+        "update_product / update_products / delete_product / delete_products\n"
         "- 用户：list_users / get_user / create_user / update_user / delete_user\n"
         "\n"
         "复杂任务允许边想边调用工具边改，推荐节奏：\n"
@@ -105,7 +107,10 @@ def _system_prompt(_current_user: models.User | None = None) -> str:
         "禁止多次 create_product；只建 1 个时用 create_product\n"
         "  - 更新 2 个及以上：必须一次 update_products（updates.length=清单条数），"
         "禁止拆成多次 update_product；只改 1 个时用 update_product\n"
-        "④ 写完后立刻核对：success_count 与目标数一致，created_names / updated_names 覆盖全部；"
+        "  - 删除 2 个及以上：必须一次 delete_products（product_ids 放全部 ID），"
+        "禁止多次 delete_product；只删 1 个时用 delete_product\n"
+        "④ 写完后立刻核对：success_count 与目标数一致，"
+        "created_names / updated_names / deleted_names 覆盖全部；"
         "若有遗漏或 fail，必须再调对应批量工具补齐，禁止假装成功\n"
         "⑤ 全部完成后才中文总结；总结里成功项数必须等于用户目标数；"
         "找不到的商品要明确说明「未找到」，不要静默跳过\n"
