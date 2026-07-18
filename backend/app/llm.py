@@ -37,7 +37,9 @@ TOOL_LABELS = {
     "list_products": "查询商品列表",
     "get_product": "查询商品详情",
     "create_product": "创建商品",
+    "create_products": "批量创建商品",
     "update_product": "更新商品",
+    "update_products": "批量更新商品",
     "delete_product": "删除商品",
     "list_users": "查询用户列表",
     "get_user": "查询用户详情",
@@ -49,7 +51,9 @@ TOOL_LABELS = {
 # 写库工具 → 前端需刷新的资源名（与 useDataRefresh 的 DataResource 对齐）
 MUTATING_TOOLS: dict[str, str] = {
     "create_product": "products",
+    "create_products": "products",
     "update_product": "products",
+    "update_products": "products",
     "delete_product": "products",
     "create_user": "users",
     "update_user": "users",
@@ -87,20 +91,31 @@ def _system_prompt(_current_user: models.User | None = None) -> str:
         "禁止只调工具不说话；不要复述原始 JSON。\n"
         "\n"
         "【数据操作方法】可用工具即全部能力：\n"
-        "- 商品：list_products / get_product / create_product / update_product / delete_product\n"
+        "- 商品：list_products / get_product / create_product / create_products / "
+        "update_product / update_products / delete_product\n"
         "- 用户：list_users / get_user / create_user / update_user / delete_user\n"
         "\n"
         "复杂任务允许边想边调用工具边改，推荐节奏：\n"
-        "① 先复述用户目标（一句话）\n"
-        "② 先查后列：用 list_* 查出候选（page_size 建议 100）；若 total 大于本页数量，"
-        "必须继续 page=2,3…翻页直到拿全。在思考中列出将处理的项并核对是否符合条件\n"
-        "③ 再改：对核对通过的目标，自己算出新值，并在同一轮尽量并行多次调用 update_*；"
-        "不要每次只改 1～2 个；没改完禁止总结，必须继续下一轮改剩余项\n"
-        "④ 收尾前必须再 list 一次，确认没有遗漏符合条件的项；确认没有后才中文总结"
-        "（名称、ID、旧值→新值）\n"
+        "① 先复述用户目标（一句话），并数清用户要处理几个\n"
+        "② 先查后列（改/删时）：用 list_* 查出候选（page_size 建议 100）；若 total 大于本页数量，"
+        "必须继续 page=2,3…翻页直到拿全。在思考中逐条列出「名称→ID→将改字段」并核对；"
+        "用户点名的每一项都必须出现在清单里，缺一不可\n"
+        "③ 批量写入：\n"
+        "  - 创建 2 个及以上：必须一次 create_products（products 放全部项，名称互不相同），"
+        "禁止多次 create_product；只建 1 个时用 create_product\n"
+        "  - 更新 2 个及以上：必须一次 update_products（updates.length=清单条数），"
+        "禁止拆成多次 update_product；只改 1 个时用 update_product\n"
+        "④ 写完后立刻核对：success_count 与目标数一致，created_names / updated_names 覆盖全部；"
+        "若有遗漏或 fail，必须再调对应批量工具补齐，禁止假装成功\n"
+        "⑤ 全部完成后才中文总结；总结里成功项数必须等于用户目标数；"
+        "找不到的商品要明确说明「未找到」，不要静默跳过\n"
         "\n"
+        "示例：「帮我再加10个不同的商品」→ 想好 10 个不重名商品 → "
+        "一次 create_products 传 10 条 → 核对 success_count=10 → 总结。\n"
+        "示例：「机器人、餐巾纸、直升机玩具都改成666」→ list 查出三个 ID → "
+        "一次 update_products 传 3 条 → 核对 success_count=3 → 总结三项。\n"
         "示例：「把价格超过100的改成100以下随机价」→ 先 list 全部商品（含翻页）→ "
-        "筛出 price>100 的列出来核对 → 再对它们并行 update → 再 list 确认已无 price>100 → 中文总结。\n"
+        "筛出 price>100 列成清单 → 一次 update_products（条数=清单）→ 核对 → 总结。\n"
         "\n"
         "创建商品：名称必填；描述/价格/库存缺省时可自行补合理值。"
         "商品名称必须唯一，已存在同名时不要重复创建。\n"
