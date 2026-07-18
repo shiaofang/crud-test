@@ -25,7 +25,7 @@ ActivitySource = Literal["admin", "ai"]
 
 _loop: asyncio.AbstractEventLoop | None = None
 _producer: AIOKafkaProducer | None = None
-_consumer_task: asyncio.Task[None] | None = None
+_activity_consumer_task: asyncio.Task[None] | None = None
 _started = False
 
 
@@ -100,7 +100,7 @@ def build_activity_event(
     }
 
 
-async def _send(event: dict[str, Any]) -> None:
+async def _send_activity(event: dict[str, Any]) -> None:
     if _producer is None:
         raise RuntimeError("Kafka producer 未就绪，无法发布商品动态")
     payload = json.dumps(event, ensure_ascii=False).encode("utf-8")
@@ -117,11 +117,11 @@ def publish_activity(event: dict[str, Any]) -> None:
 
         # 已在主事件循环中：不能 result() 等待，否则会死锁
         if running is not None and running is _loop:
-            running.create_task(_send(event))
+            running.create_task(_send_activity(event))
             return
 
         if _loop is not None and _loop.is_running():
-            future = asyncio.run_coroutine_threadsafe(_send(event), _loop)
+            future = asyncio.run_coroutine_threadsafe(_send_activity(event), _loop)
             future.result(timeout=3)
             return
 
@@ -151,8 +151,8 @@ def emit_product_activity(
     publish_activity(event)
 
 
-def _persist_and_fanout(event: dict[str, Any]) -> dict[str, Any]:
-    """写入 MySQL 后返回带 id 的事件，供 Hub 扇出。"""
+def _persist_activity(event: dict[str, Any]) -> dict[str, Any]:
+    """写入 MySQL，返回带 id 的事件（扇出由 ActivityHub 负责）。"""
     db = SessionLocal()
     try:
         row = crud.create_activity(db, event)
@@ -174,7 +174,8 @@ def _warm_hub_from_db(limit: int = 50) -> None:
         db.close()
 
 
-async def _consume_forever() -> None:
+async def _consume_activities() -> None:
+    """持续消费 mall.activities，落库后扇出到 ActivityHub。"""
     consumer = AIOKafkaConsumer(
         settings.kafka_activity_topic,
         bootstrap_servers=settings.kafka_bootstrap_servers,
@@ -196,7 +197,7 @@ async def _consume_forever() -> None:
                 event = json.loads(msg.value.decode("utf-8"))
                 if not isinstance(event, dict):
                     continue
-                persisted = await asyncio.to_thread(_persist_and_fanout, event)
+                persisted = await asyncio.to_thread(_persist_activity, event)
                 activity_hub.publish(persisted)
             except Exception:
                 logger.exception("处理 Kafka 动态消息失败")
@@ -206,7 +207,7 @@ async def _consume_forever() -> None:
 
 async def start_kafka() -> None:
     """应用启动时调用：必须连上 Kafka，失败则阻止启动。"""
-    global _loop, _producer, _consumer_task, _started
+    global _loop, _producer, _activity_consumer_task, _started
     if _started:
         return
     _loop = asyncio.get_running_loop()
@@ -218,8 +219,9 @@ async def start_kafka() -> None:
     )
     await producer.start()
     _producer = producer
-    _consumer_task = asyncio.create_task(
-        _consume_forever(),
+    # 启动活动消费者
+    _activity_consumer_task = asyncio.create_task(
+        _consume_activities(),
         name="kafka-activity-consumer",
     )
     _started = True
@@ -232,14 +234,14 @@ async def start_kafka() -> None:
 
 async def stop_kafka() -> None:
     """应用关闭时调用。"""
-    global _producer, _consumer_task, _started, _loop
-    if _consumer_task is not None:
-        _consumer_task.cancel()
+    global _producer, _activity_consumer_task, _started, _loop
+    if _activity_consumer_task is not None:
+        _activity_consumer_task.cancel()
         try:
-            await _consumer_task
+            await _activity_consumer_task
         except asyncio.CancelledError:
             pass
-        _consumer_task = None
+        _activity_consumer_task = None
     if _producer is not None:
         await _producer.stop()
         _producer = None
